@@ -21,6 +21,7 @@ if [ ! -e "$TAILSCALE_STATE" ] && [ ! -L "$TAILSCALE_STATE" ]; then
     exit 1
 fi
 tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
+case "$ACTION" in start|restart) tailscale_no_pending_update ;; esac
 PHASE="$(tailscale_state_value phase)"
 TAILSCALE_HOST="$(tailscale_state_value hostname)"
 TAILSCALE_HTTPS="$(tailscale_state_value https_port)"

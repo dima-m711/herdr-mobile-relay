@@ -8,6 +8,7 @@ import "errors"
 const TailscaleSetupVersion = 1
 
 var tailscaleHelpers = []string{
+	"install.sh",
 	"relay/common.sh", "relay/native-install-transaction.sh",
 	"relay/tailscale-common.sh", "relay/tailscale-transaction.sh",
 	"relay/tailscale-service.sh", "relay/tailscale-control.sh",

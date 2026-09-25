@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/0cv/herdr-mobile-relay/internal/config"
 	relayrelease "github.com/0cv/herdr-mobile-relay/internal/release"
 	"github.com/0cv/herdr-mobile-relay/internal/setuphelper"
 )
@@ -31,6 +32,8 @@ const (
 var ErrConcurrent = errors.New("another update is already running")
 
 type Job struct {
+	ConnectionMode    string `json:"connection_mode,omitempty"`
+	Environment       string `json:"environment,omitempty"`
 	ReleaseRoot       string `json:"release_root"`
 	HerdrBin          string `json:"herdr_bin"`
 	TargetVersion     string `json:"target_version"`
@@ -132,6 +135,11 @@ func (w Worker) Run(ctx context.Context, jobPath string) error {
 		return fail(job.StatePath, state, fmt.Errorf("prepare target release: %w", prepareErr))
 	}
 	defer os.RemoveAll(staged.Root)
+	if job.ConnectionMode == config.ConnectionModeTailscale {
+		if err := relayrelease.ValidateTailscaleRelease(staged.Manifest); err != nil {
+			return fail(job.StatePath, state, err)
+		}
+	}
 
 	if job.DeployAppFirst {
 		state.State = "deploying_app"
@@ -192,6 +200,22 @@ func installPlugin(ctx context.Context, job Job) error {
 		"--yes",
 	)
 	command.Env = environmentWith("HERDR_MOBILE_RELAY_NO_AUTO_SETUP", "1")
+	if job.ConnectionMode == config.ConnectionModeTailscale {
+		for key, value := range map[string]string{
+			"HERDR_RELAY_ENV": job.Environment, "HERDR_PLUGIN_CONFIG_DIR": filepath.Dir(job.Environment),
+			"HERDR_RELEASE_ROOT": job.ReleaseRoot, "HERDR_CONNECTION_MODE": config.ConnectionModeTailscale,
+			"HERDR_RELAY_SERVICE_NAME": "herdr-mobile-relay-tailscale.service",
+			"HERDR_RELEASE_REPOSITORY": relayrelease.Repository, "HERDR_UPDATE_EXPECTED_REVISION": strings.ToLower(job.TargetRevision),
+		} {
+			filtered := command.Env[:0]
+			for _, entry := range command.Env {
+				if !strings.HasPrefix(entry, key+"=") {
+					filtered = append(filtered, entry)
+				}
+			}
+			command.Env = append(filtered, key+"="+value)
+		}
+	}
 	output, err := runCommandContext(ctx, command)
 	if err != nil {
 		return fmt.Errorf(
@@ -287,6 +311,12 @@ func environmentWith(key, value string) []string {
 }
 
 func validateJob(job Job) error {
+	if job.ConnectionMode != "" && job.ConnectionMode != config.ConnectionModeTailscale {
+		return errors.New("unsupported update connection mode")
+	}
+	if job.ConnectionMode == config.ConnectionModeTailscale && job.DeployAppFirst {
+		return errors.New("private updates cannot deploy a Cloudflare app; update the app-host relay separately")
+	}
 	if job.ReleaseRoot == "" || !filepath.IsAbs(job.ReleaseRoot) {
 		return errors.New("release_root must be absolute")
 	}
@@ -306,6 +336,18 @@ func validateJob(job Job) error {
 	if job.StatePath == "" || !filepath.IsAbs(job.StatePath) {
 		return errors.New("state_path must be absolute")
 	}
+	setupPath := filepath.Join(filepath.Dir(job.StatePath), "tailscale-setup.json")
+	if _, err := os.Lstat(setupPath); err == nil {
+		setup, err := setuphelper.ReadTailscaleState(setupPath)
+		if err != nil {
+			return err
+		}
+		if setup.Phase != "removed" && setup.Phase != "rolled-back" && job.ConnectionMode != config.ConnectionModeTailscale {
+			return errors.New("private setup cannot run a legacy update job")
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if job.DeployAppFirst {
 		origin, originErr := setuphelper.NormalizeOrigin(job.ExpectedAppOrigin, false)
 		if originErr != nil || origin != job.ExpectedAppOrigin {
@@ -317,6 +359,37 @@ func validateJob(job Job) error {
 	health, err := url.Parse(job.HealthURL)
 	if err != nil || health.Scheme != "http" || !isLoopback(health.Hostname()) {
 		return errors.New("health_url must use HTTP on loopback")
+	}
+	if job.ConnectionMode == config.ConnectionModeTailscale {
+		return validatePrivateJob(job)
+	}
+	if job.Environment != "" {
+		return errors.New("private environment requires a private update job")
+	}
+	return nil
+}
+
+func validatePrivateJob(job Job) error {
+	expectedEnv := filepath.Join(filepath.Dir(job.StatePath), "relay.env")
+	if job.Environment != expectedEnv {
+		return errors.New("private update environment differs from its runtime directory")
+	}
+	values, err := setuphelper.ReadTailscaleEnvironment(job.Environment)
+	if err != nil {
+		return err
+	}
+	if values["HERDR_CONNECTION_MODE"] != config.ConnectionModeTailscale || values["HERDR_RELAY_SERVICE_NAME"] != "herdr-mobile-relay-tailscale.service" || values["HERDR_RELEASE_ROOT"] != job.ReleaseRoot || values["HERDR_BIN"] != job.HerdrBin {
+		return errors.New("private update policy or installation identity changed")
+	}
+	state, err := setuphelper.ReadTailscaleState(filepath.Join(filepath.Dir(job.Environment), "tailscale-setup.json"))
+	if err != nil {
+		return err
+	}
+	if state.Phase != "verified" || state.Environment != job.Environment || filepath.Base(state.Unit) != "herdr-mobile-relay-tailscale.service" || state.Instance != values["HERDR_RELAY_INSTANCE_ID"] {
+		return errors.New("private setup is not verified for this update")
+	}
+	if job.HealthURL != fmt.Sprintf("http://127.0.0.1:%d/healthz", state.RelayPort) {
+		return errors.New("private update health endpoint changed")
 	}
 	return nil
 }

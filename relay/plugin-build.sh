@@ -49,8 +49,9 @@ esac
 TARGET_ENV="$TARGET_CONFIG_ROOT/relay.env"
 CONNECTION_MODE="$(relay_connection_mode "$TARGET_ENV" migration)"
 if [ "$CONNECTION_MODE" = tailscale ]; then
-    echo 'Private installation detected; legacy plugin migration is disabled. Use a Tailscale-aware fork updater.' >&2
-    exit 1
+    echo 'Private installation detected; using verified private release cutover, not legacy migration.' >&2
+    export HERDR_RELAY_ENV="$TARGET_ENV" HERDR_PLUGIN_CONFIG_DIR="$TARGET_CONFIG_ROOT"
+    GH_TOKEN="$INSTALL_TOKEN" exec bash "$SCRIPT_DIR/tailscale-update.sh" "$VERSION"
 fi
 SOURCE_ENV="$(installed_service_env_file)"
 if [ -z "$SOURCE_ENV" ] && [ -n "${HERDR_RELAY_ENV:-}" ] && [ -f "$HERDR_RELAY_ENV" ]; then

@@ -23,6 +23,7 @@ tailscale_setup_context
 TAILSCALE_BINARY="$(relay_binary)"
 export HERDR_WEB_ROOT="$TAILSCALE_RELEASE_ROOT/current/web"
 tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
+tailscale_no_pending_update
 for pending in "$TAILSCALE_CONFIG_DIR"/app-origin-recovery.*; do
     if [ -e "$pending" ] || [ -L "$pending" ]; then
         echo 'An interrupted app-origin change needs review. Preserve the private app-origin-recovery.* evidence, reconcile relay.env and restart the verified service before moving that evidence aside. No invitation generated.' >&2
