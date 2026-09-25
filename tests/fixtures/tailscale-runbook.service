@@ -1,0 +1,13 @@
+[Unit]
+Description=Herdr Mobile Relay (private access through Tailscale Serve)
+
+[Service]
+Type=simple
+ExecStart=/bin/bash "%h/.config/herdr/plugins/config/herdr-mobile-relay.events/start-tailscale-relay.sh"
+Environment="HERDR_RELAY_ENV=%h/.config/herdr/plugins/config/herdr-mobile-relay.events/relay.env"
+Restart=on-failure
+RestartSec=5
+UMask=0077
+
+[Install]
+WantedBy=default.target

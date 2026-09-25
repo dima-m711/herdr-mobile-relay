@@ -21,6 +21,7 @@ set -euo pipefail
 [[ "$HERDR_RELAY_INSTANCE_ID" == fixture-instance ]]
 [[ "$HERDR_RELAY_SERVICE_NAME" == herdr-mobile-relay-tailscale.service ]]
 [[ -z "${GH_TOKEN:-}" && -z "${GITHUB_TOKEN:-}" ]]
+[[ -z "${HERDR_SESSION:-}" && -z "${HERDR_CLIENT_SOCKET_PATH:-}" ]]
 printf '%s\n' "$HERDR_SOCKET_PATH" > "$TEST_LAUNCH"
 STUB
 for name in tailscale cloudflared sudo systemctl; do
@@ -45,6 +46,8 @@ HERDR_RELAY_INSTANCE_ID='fixture-instance'
 HERDR_SOCKET_PATH='$WORK/selected.sock'
 GH_TOKEN='fixture-release-secret'
 GITHUB_TOKEN='fixture-release-secret'
+HERDR_SESSION='wrong-inherited-session'
+HERDR_CLIENT_SOCKET_PATH='/wrong-socket'
 EOF
 chmod 600 "$HERDR_RELAY_ENV"
 cp "$HERDR_RELAY_ENV" "$WORK/before.env"
