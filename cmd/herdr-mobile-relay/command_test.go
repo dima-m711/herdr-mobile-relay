@@ -73,6 +73,19 @@ func TestCommandBoundaries(t *testing.T) {
 		}
 	})
 
+	t.Run("tailscale inspection never starts a server", func(t *testing.T) {
+		for _, args := range [][]string{
+			{"tailscale-inspect"},
+			{"tailscale-inspect", "hostname"}, // No stdin is a parse failure.
+			{"tailscale-inspect", "serve", "mini.tailtest.ts.net", "invalid", "8375"},
+		} {
+			result := runCommandSubprocess(t, args...)
+			if result.exitCode != 1 || len(result.stdout) != 0 || len(result.stderr) == 0 {
+				t.Fatalf("inspection result = %+v, want a bounded failure without stdout", result)
+			}
+		}
+	})
+
 	t.Run("version json", func(t *testing.T) {
 		t.Setenv("HERDR_RELAY_LOG_LEVEL", "verbose")
 		t.Setenv("JOURNAL_STREAM", "")
