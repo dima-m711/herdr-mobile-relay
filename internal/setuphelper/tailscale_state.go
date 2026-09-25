@@ -36,6 +36,22 @@ type TailscaleSetupState struct {
 }
 
 func RunTailscaleState(args []string, input io.Reader, output io.Writer) error {
+	// Shell orchestration passes validated data as argv rather than attempting
+	// to escape paths into JSON. No credentials are arguments to this command.
+	if len(args) == 12 && args[0] == "prepare" {
+		https, err := tailscalePort(args[3])
+		if err != nil {
+			return err
+		}
+		local, err := tailscalePort(args[4])
+		if err != nil {
+			return err
+		}
+		return CreateTailscaleState(args[1], TailscaleSetupState{
+			Schema: 1, Owner: tailscaleStateOwner, Phase: "prepared", Hostname: args[2], HTTPSPort: https, RelayPort: local,
+			Environment: args[5], Unit: args[6], Socket: args[7], Instance: args[8], RecoveryDirectory: args[9], UnrelatedDigest: args[10], RouteOwnership: args[11],
+		})
+	}
 	if len(args) == 2 && args[0] == "create" {
 		state, err := decodeTailscaleState(input)
 		if err != nil {
@@ -72,7 +88,7 @@ func RunTailscaleState(args []string, input io.Reader, output io.Writer) error {
 		}
 		return AdvanceTailscaleState(args[1], args[2], args[3], route)
 	}
-	return errors.New("usage: tailscale-state create FILE | get FILE FIELD | advance FILE EXPECTED_PHASE NEXT_PHASE [ROUTE_OWNERSHIP]")
+	return errors.New("usage: tailscale-state prepare FILE HOST HTTPS_PORT RELAY_PORT ENV UNIT SOCKET INSTANCE RECOVERY DIGEST OWNERSHIP | create FILE | get FILE FIELD | advance FILE EXPECTED_PHASE NEXT_PHASE [ROUTE_OWNERSHIP]")
 }
 
 func CreateTailscaleState(path string, state TailscaleSetupState) error {

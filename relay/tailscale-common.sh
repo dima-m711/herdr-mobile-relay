@@ -51,6 +51,73 @@ tailscale_acquire_setup_lock() {
     export HERDR_RELAY_SETUP_LOCK_FD="$fd"
 }
 
+# Validate defaults without mkdir/chmod, reading credentials, or touching the
+# service. Configuration creation belongs after the human approves the summary.
+tailscale_setup_context() {
+    local directory current command_name
+    if [ "$(uname -s)" != Linux ]; then
+        echo 'Tailscale setup currently supports Linux systemd user services only.' >&2
+        return 1
+    fi
+    case "$(uname -m)" in x86_64|aarch64|arm64) ;; *) echo 'Supported Tailscale setup architectures: amd64 and arm64.' >&2; return 1 ;; esac
+    require_user_service_context || return 1
+    case "$HOME" in /*) ;; *) return 1 ;; esac
+    case "$HOME" in *$'\n'*|*$'\r'*) return 1 ;; esac
+    [ -d "$HOME" ] && [ "$(cd "$HOME" && pwd -P)" = "$HOME" ] || {
+        echo 'Tailscale setup requires a canonical, non-symlinked home directory.' >&2
+        return 1
+    }
+    TAILSCALE_CONFIG_DIR="$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events"
+    TAILSCALE_ENV="$TAILSCALE_CONFIG_DIR/relay.env"
+    TAILSCALE_STATE="$TAILSCALE_CONFIG_DIR/tailscale-setup.json"
+    TAILSCALE_LABEL=herdr-mobile-relay-tailscale.service
+    TAILSCALE_UNIT_DIR="$HOME/.config/systemd/user"
+    TAILSCALE_UNIT="$TAILSCALE_UNIT_DIR/$TAILSCALE_LABEL"
+    TAILSCALE_RELEASE_ROOT="$HOME/.local/share/herdr-mobile-relay"
+    if [ "${XDG_CONFIG_HOME:-$HOME/.config}" != "$HOME/.config" ] ||
+       [ "${XDG_DATA_HOME:-$HOME/.local/share}" != "$HOME/.local/share" ] ||
+       [ "${XDG_STATE_HOME:-$HOME/.local/state}" != "$HOME/.local/state" ] ||
+       [ "${HERDR_PLUGIN_CONFIG_DIR:-$TAILSCALE_CONFIG_DIR}" != "$TAILSCALE_CONFIG_DIR" ] ||
+       [ "${HERDR_RELAY_ENV:-$TAILSCALE_ENV}" != "$TAILSCALE_ENV" ] ||
+       [ "${HERDR_RELEASE_ROOT:-$TAILSCALE_RELEASE_ROOT}" != "$TAILSCALE_RELEASE_ROOT" ] ||
+       [ "${HERDR_RELAY_BIN:-$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay}" != "$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay" ]; then
+        echo 'Custom XDG, plugin, environment or release paths require manual migration review; nothing changed.' >&2
+        return 1
+    fi
+    for directory in "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR" "$TAILSCALE_RELEASE_ROOT" "$HOME/.local/state"; do
+        current="$directory"
+        while [ "$current" != / ]; do
+            if [ -L "$current" ] || { [ -e "$current" ] && [ ! -d "$current" ]; }; then
+                echo 'Refusing a symlinked or non-directory Tailscale setup path.' >&2
+                return 1
+            fi
+            current="$(dirname "$current")"
+        done
+    done
+    for command_name in timeout flock curl systemctl systemd-analyze; do
+        command -v "$command_name" >/dev/null 2>&1 || {
+            echo "Missing setup prerequisite: $command_name (no tools were installed)." >&2
+            return 1
+        }
+    done
+    timeout 10 systemctl --user show-environment >/dev/null 2>&1 || {
+        echo 'The systemd user manager is unavailable. Sign in normally; do not run setup with sudo.' >&2
+        return 1
+    }
+}
+
+tailscale_render_unit() {
+    local work environment launcher
+    work="$(systemd_quoted "$TAILSCALE_RELEASE_ROOT/current")" || return 1
+    environment="$(systemd_quoted "HERDR_RELAY_ENV=$TAILSCALE_ENV")" || return 1
+    launcher="$(systemd_quoted "$TAILSCALE_RELEASE_ROOT/current/relay/tailscale-service.sh" exec)" || return 1
+    printf '%s\n' '# herdr-mobile-relay-tailscale-v1' '[Unit]' \
+        'Description=Herdr Mobile Relay (private Tailscale access)' '' '[Service]' \
+        'Type=simple' "WorkingDirectory=$work" "Environment=$environment" \
+        "ExecStart=$launcher" 'Restart=on-failure' 'RestartSec=5' 'UMask=0077' '' \
+        '[Install]' 'WantedBy=default.target'
+}
+
 tailscale_require_client() {
     local version major minor
     command -v tailscale >/dev/null 2>&1 || {

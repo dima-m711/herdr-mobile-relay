@@ -219,6 +219,18 @@ func TestTailscaleStateValidatesIdentity(t *testing.T) {
 	}
 }
 
+func TestPrepareTailscaleStateArguments(t *testing.T) {
+	path, state := tailscaleStateFixture(t)
+	args := []string{"prepare", path, state.Hostname, "8443", "8375", state.Environment, state.Unit, state.Socket, state.Instance, state.RecoveryDirectory, state.UnrelatedDigest, state.RouteOwnership}
+	if err := RunTailscaleState(args, strings.NewReader(""), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadTailscaleState(path)
+	if err != nil || got != state {
+		t.Fatalf("state = %+v, err = %v", got, err)
+	}
+}
+
 func TestRunTailscaleState(t *testing.T) {
 	path, state := tailscaleStateFixture(t)
 	input, _ := json.Marshal(state)
