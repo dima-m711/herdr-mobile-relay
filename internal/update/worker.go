@@ -25,7 +25,7 @@ const (
 	updateWorkerTimeout = 15 * time.Minute
 	processTermGrace    = 2 * time.Second
 	processWaitDelay    = 4 * time.Second
-	updateRepository    = "0cv/herdr-mobile-relay"
+	updateRepository    = relayrelease.Repository
 )
 
 var ErrConcurrent = errors.New("another update is already running")

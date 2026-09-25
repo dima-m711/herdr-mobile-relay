@@ -50,7 +50,7 @@ own_gateway_summary() {
     host="$(env_file_value "$state_file" HERDR_GATEWAY_DEPLOY_HOST)"
     [ -n "$host" ] || return 0
     if [ -n "$available" ] && [ -n "$installed" ] && [ "$available" != "$installed" ]; then
-        action="run herdr plugin install 0cv/herdr-mobile-relay, then redeploy with 3"
+        action="run herdr plugin install dima-m711/herdr-mobile-relay, then redeploy with 3"
     fi
     if ! health="$(curl -fsS --max-time 3 "https://$host/healthz" 2>/dev/null)"; then
         printf '%s is unreachable, version unknown' "$host"

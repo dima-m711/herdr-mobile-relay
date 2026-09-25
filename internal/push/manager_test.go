@@ -488,7 +488,7 @@ func TestSendOneUsesRoutableVAPIDSubject(t *testing.T) {
 	if err := json.Unmarshal(claimsJSON, &claims); err != nil {
 		t.Fatal(err)
 	}
-	if want := "https://github.com/0cv/herdr-mobile-relay"; claims.Subject != want {
+	if want := "https://github.com/dima-m711/herdr-mobile-relay"; claims.Subject != want {
 		t.Fatalf("VAPID subject = %q, want %q", claims.Subject, want)
 	}
 }

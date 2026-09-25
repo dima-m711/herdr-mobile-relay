@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/0cv/herdr-mobile-relay/internal/protocol"
+	"github.com/0cv/herdr-mobile-relay/internal/release"
 	webpush "github.com/SherClockHolmes/webpush-go"
 )
 
@@ -1056,7 +1057,7 @@ func (m *Manager) sendOne(ctx context.Context, sub Subscription, payload []byte)
 
 	resp, err := webpush.SendNotificationWithContext(ctx, payload, wpSub, &webpush.Options{
 		HTTPClient:      m.httpClient,
-		Subscriber:      "https://github.com/0cv/herdr-mobile-relay",
+		Subscriber:      release.Web,
 		VAPIDPublicKey:  m.vapidPublic,
 		VAPIDPrivateKey: m.vapidPrivate,
 		TTL:             300,

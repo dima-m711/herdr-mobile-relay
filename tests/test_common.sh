@@ -1316,7 +1316,7 @@ case "$MENU_OUTPUT" in
     *) echo "setup menu did not report the stale phone app" >&2; exit 1 ;;
 esac
 case "$MENU_OUTPUT" in
-    *"Own gateway: gw-owned.example.test runs 9.9.8; plugin offers 9.9.10 - run herdr plugin install 0cv/herdr-mobile-relay, then redeploy with 3"*) ;;
+    *"Own gateway: gw-owned.example.test runs 9.9.8; plugin offers 9.9.10 - run herdr plugin install dima-m711/herdr-mobile-relay, then redeploy with 3"*) ;;
     *) echo "setup menu did not report how to update the stale self-hosted gateway" >&2; exit 1 ;;
 esac
 case "$MENU_OUTPUT" in

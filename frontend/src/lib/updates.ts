@@ -11,7 +11,7 @@ const APP_RELOAD_ATTEMPTS_KEY = 'herdr_app_reload_attempts';
 const MAX_AUTOMATIC_RELOAD_ATTEMPTS = 2;
 const sessionStartedRelayIds = new Set<string>();
 const APP_DEPLOY_SELF_UPDATE_MIN_VERSION = '0.13.3';
-export const MANAGED_UPDATE_COMMAND = 'HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1 herdr plugin install 0cv/herdr-mobile-relay --yes';
+export const MANAGED_UPDATE_COMMAND = 'HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1 herdr plugin install dima-m711/herdr-mobile-relay --yes';
 export const CHECKOUT_UPDATE_COMMAND = 'git pull --ff-only && make service-install';
 const RELAY_UPDATE_STATES = new Set([
   'checking',
