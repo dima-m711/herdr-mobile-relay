@@ -114,6 +114,8 @@ shell-check:
 	bash tests/test_service_credentials.sh
 	bash tests/test_common.sh
 	bash tests/test_tailscale_common.sh
+	bash tests/test_tailscale_service.sh
+	bash tests/test_tailscale_lock.sh
 	bash tests/test_gateway_deploy.sh
 	bash tests/test_plugin_build.sh
 	sh tests/test_plugin_recovery.sh

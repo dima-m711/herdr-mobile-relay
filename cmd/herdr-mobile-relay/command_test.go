@@ -75,6 +75,8 @@ func TestCommandBoundaries(t *testing.T) {
 
 	t.Run("tailscale inspection never starts a server", func(t *testing.T) {
 		for _, args := range [][]string{
+			{"tailscale-state"},
+			{"tailscale-state", "create", filepath.Join(t.TempDir(), "state.json")}, // Empty input cannot create state.
 			{"tailscale-inspect"},
 			{"tailscale-inspect", "hostname"}, // No stdin is a parse failure.
 			{"tailscale-inspect", "serve", "mini.tailtest.ts.net", "invalid", "8375"},
