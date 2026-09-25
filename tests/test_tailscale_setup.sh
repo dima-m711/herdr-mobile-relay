@@ -283,4 +283,23 @@ else
  status=$?; [[ "$status" != 124 ]] || { echo 'EOF hung instead of cancelling' >&2; exit 1; }
 fi
 [[ ! -e "$STATE" && ! -e "$ENV_FILE" && ! -e "$UNIT" ]]
+new_case transport-departure
+run_wizard y
+cp "$ENV_FILE" "$CASE/before.env"
+if printf 'y\n' | timeout 15 script -qefc "bash '$REPO_DIR/relay/tailscale-switch.sh' community" /dev/null > "$CASE/output" 2>&1; then echo 'active private service switched' >&2; exit 1; fi
+cmp -s "$ENV_FILE" "$CASE/before.env"
+run_teardown y
+if bash "$REPO_DIR/relay/tailscale-switch.sh" community < /dev/null > "$CASE/output" 2>&1; then echo 'noninteractive switch accepted' >&2; exit 1; fi
+if printf 'n\n' | timeout 15 script -qefc "bash '$REPO_DIR/relay/tailscale-switch.sh' community" /dev/null > "$CASE/output" 2>&1; then echo 'cancelled switch accepted' >&2; exit 1; fi
+cmp -s "$ENV_FILE" "$CASE/before.env"
+mkdir -p "${ENV_FILE%/*}/device-auth"
+printf 'keep device\n' > "${ENV_FILE%/*}/device-auth/sentinel"
+: > "$CASE/calls"
+printf 'y\n' | timeout 15 script -qefc "bash '$REPO_DIR/relay/tailscale-switch.sh' community" /dev/null > "$CASE/output" 2>&1
+[[ -z "$($TS_HELPER tailscale-preflight environment "$ENV_FILE" HERDR_CONNECTION_MODE)" ]]
+[[ -z "$($TS_HELPER tailscale-preflight environment "$ENV_FILE" HERDR_RELAY_SERVICE_NAME)" ]]
+[[ "$($TS_HELPER tailscale-preflight environment "$ENV_FILE" HERDR_RELAY_TOKEN)" == "$($TS_HELPER tailscale-preflight environment "$CASE/before.env" HERDR_RELAY_TOKEN)" ]]
+[[ "$(< "${ENV_FILE%/*}/connection-method")" == community && "$(phase)" == removed ]]
+[[ -f "${ENV_FILE%/*}/device-auth/sentinel" && ! -e "$UNIT" && ! -e "$CASE/route" ]]
+if grep -Eq 'tailscale serve (--bg|--https)|systemctl --user (restart|enable|disable|stop)' "$CASE/calls"; then echo 'transport selection mutated a service/route' >&2; exit 1; fi
 echo 'Tailscale wizard transaction fixtures passed'

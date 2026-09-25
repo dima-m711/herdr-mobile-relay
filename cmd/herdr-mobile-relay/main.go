@@ -160,6 +160,8 @@ func run(args []string) (int, error) {
 		return 0, nil
 	case "tailscale-inspect":
 		return status(setuphelper.RunTailscaleInspection(args, os.Stdin, os.Stdout))
+	case "tailscale-pairing":
+		return status(setuphelper.RunTailscalePairing(args, os.Stdout))
 	case "tailscale-preflight":
 		return status(setuphelper.RunTailscalePreflight(args, os.Stdin, os.Stdout))
 	case "tailscale-state":
