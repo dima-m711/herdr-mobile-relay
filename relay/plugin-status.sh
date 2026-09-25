@@ -11,6 +11,11 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HO
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$CONNECTION_MODE" = tailscale ]; then
+    exec bash "$SCRIPT_DIR/tailscale-control.sh" status
+fi
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 load_relay_env "$ENV_FILE"
 

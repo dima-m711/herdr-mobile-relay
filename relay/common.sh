@@ -114,6 +114,19 @@ ssh_key_path() {
     printf '%s\n' "$candidate"
 }
 
+# Discovery must not migrate files, alter permissions or source credentials.
+relay_env_path() {
+    local service_env
+    if [ -n "${HERDR_RELAY_ENV:-}" ]; then printf '%s\n' "$HERDR_RELAY_ENV"
+    elif [ -n "${HERDR_PLUGIN_CONFIG_DIR:-}" ]; then printf '%s/relay.env\n' "$HERDR_PLUGIN_CONFIG_DIR"
+    elif [ -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] || [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] || [ -e "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/tailscale-setup.json" ]; then
+        printf '%s\n' "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/relay.env"
+    else
+        service_env="$(installed_service_env_file)" || return 1
+        if [ -n "$service_env" ]; then printf '%s\n' "$service_env"; else printf '%s/.env\n' "$1"; fi
+    fi
+}
+
 relay_env_file() {
     local script_dir="$1"
     local config_dir
@@ -124,7 +137,7 @@ relay_env_file() {
         return
     fi
     if [ -z "${HERDR_PLUGIN_CONFIG_DIR:-}" ]; then
-        printf '%s/.env\n' "$script_dir"
+        relay_env_path "$script_dir"
         return
     fi
 
@@ -363,12 +376,159 @@ cloudflare_routed_hostname() {
         head -1
 }
 
+# Read only the two public routing settings, never source configuration to
+# discover which service may be controlled. Unknown syntax fails closed.
+relay_routing_setting() {
+    local file="$1" key="$2" line raw='' found=0 size
+    case "$key" in HERDR_CONNECTION_MODE|HERDR_RELAY_SERVICE_NAME) ;; *) return 1 ;; esac
+    [ -e "$file" ] || [ -L "$file" ] || return 0
+    [ -f "$file" ] || return 1
+    size="$(wc -c < "$file")" || return 1
+    [ "$size" -le 65536 ] || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line#"${line%%[![:space:]]*}"}"
+        case "$line" in export[[:space:]]*) line="${line#export}"; line="${line#"${line%%[![:space:]]*}"}" ;; esac
+        case "$line" in "$key="*) ;; *) continue ;; esac
+        found=$((found + 1)); [ "$found" -eq 1 ] || return 1
+        raw="${line#*=}"
+        case "$raw" in \'*\'|\"*\") raw="${raw:1:${#raw}-2}" ;; esac
+    done < "$file"
+    case "$key:$raw" in
+        HERDR_CONNECTION_MODE:|HERDR_CONNECTION_MODE:tailscale|HERDR_RELAY_SERVICE_NAME:|HERDR_RELAY_SERVICE_NAME:herdr-mobile-relay.service|HERDR_RELAY_SERVICE_NAME:herdr-remote.service|HERDR_RELAY_SERVICE_NAME:herdr-mobile-relay-tailscale.service|HERDR_RELAY_SERVICE_NAME:com.herdr-mobile-relay.service|HERDR_RELAY_SERVICE_NAME:com.herdr-remote.service) printf '%s\n' "$raw" ;;
+        *) echo 'Unknown relay mode or service setting; refusing automatic routing.' >&2; return 1 ;;
+    esac
+}
+
+linux_relay_service_label() {
+    local candidate selected='' count=0
+    case "${HERDR_RELAY_SERVICE_NAME:-}" in ''|herdr-mobile-relay.service|herdr-remote.service|herdr-mobile-relay-tailscale.service) ;; *) echo 'Unrecognized relay service name.' >&2; return 1 ;; esac
+    for candidate in herdr-mobile-relay.service herdr-remote.service herdr-mobile-relay-tailscale.service; do
+        if [ -e "$HOME/.config/systemd/user/$candidate" ] || [ -L "$HOME/.config/systemd/user/$candidate" ]; then
+            selected="$candidate"; count=$((count + 1))
+        fi
+    done
+    [ "$count" -le 1 ] || { echo 'Multiple relay services exist; select and clean up the conflict explicitly.' >&2; return 1; }
+    if [ -n "$selected" ] && [ -n "${HERDR_RELAY_SERVICE_NAME:-}" ] && [ "$selected" != "$HERDR_RELAY_SERVICE_NAME" ]; then
+        echo 'Configured service name differs from the installed definition.' >&2; return 1
+    fi
+    printf '%s\n' "${selected:-${HERDR_RELAY_SERVICE_NAME:-herdr-mobile-relay.service}}"
+}
+
+assert_linux_relay_unit() {
+    local label="$1" env_file="$2" unit root fragment overrides
+    [ "$label" = herdr-mobile-relay.service ] || { echo 'Legacy service requires explicit migration before lifecycle control.' >&2; return 1; }
+    unit="$HOME/.config/systemd/user/$label"
+    [ -f "$unit" ] && [ ! -L "$unit" ] || return 1
+    case "$(stat -c '%u:%a:%h' "$unit")" in "$EUID:600:1"|"$EUID:644:1") ;; *) return 1 ;; esac
+    root="$(relay_release_root)/current"
+    cmp -s "$unit" <(printf '%s\n' '[Unit]' 'Description=Herdr Mobile Relay and Cloudflare tunnel' 'After=network-online.target' 'Wants=network-online.target' '' '[Service]' 'Type=simple' \
+        "WorkingDirectory=$(systemd_quoted "$root")" "Environment=$(systemd_quoted "HERDR_RELAY_ENV=$env_file")" \
+        "ExecStart=$(systemd_quoted "$root/relay/herdr-mobile-relay-service.sh" exec)" 'Restart=on-failure' 'RestartSec=10' '' '[Install]' 'WantedBy=default.target') || {
+        echo 'Unrecognized standard service definition; review/reinstall it explicitly.' >&2; return 1;
+    }
+    fragment="$(systemctl --user show "$label" --property FragmentPath --value)" || return 1
+    overrides="$(systemctl --user show "$label" --property DropInPaths --value)" || return 1
+    [ "$fragment" = "$unit" ] && [ -z "$overrides" ] || { echo 'Unrecognized systemd service override.' >&2; return 1; }
+}
+
+assert_selected_relay_definition() {
+    local label unit
+    [ "$(uname -s)" = Linux ] || return 0
+    label="$(linux_relay_service_label)" || return 1
+    unit="$HOME/.config/systemd/user/$label"
+    if [ -e "$unit" ] || [ -L "$unit" ]; then assert_linux_relay_unit "$label" "$1"; fi
+}
+
+relay_connection_mode() {
+    local file="$1" mode name label='' state phase
+    mode="$(relay_routing_setting "$file" HERDR_CONNECTION_MODE)" || return 1
+    name="$(relay_routing_setting "$file" HERDR_RELAY_SERVICE_NAME)" || return 1
+    case "${HERDR_CONNECTION_MODE:-}" in ''|tailscale) ;; *) echo 'Unknown inherited connection mode.' >&2; return 1 ;; esac
+    if [ "$(uname -s)" = Linux ]; then
+        case "$name" in ''|herdr-mobile-relay.service|herdr-remote.service|herdr-mobile-relay-tailscale.service) ;; *) echo 'Service setting belongs to another platform.' >&2; return 1 ;; esac
+        label="$(linux_relay_service_label)" || return 1
+        if [ -e "$HOME/.config/systemd/user/$label" ] || [ -L "$HOME/.config/systemd/user/$label" ]; then
+            [ -z "$name" ] || [ "$name" = "$label" ] || { echo 'Stored service identity conflicts with the selected unit.' >&2; return 1; }
+        fi
+    fi
+    if [ "$mode" = tailscale ] || [ "${HERDR_CONNECTION_MODE:-}" = tailscale ] || [ "$label" = herdr-mobile-relay-tailscale.service ]; then printf 'tailscale\n'; return 0; fi
+    for state in "$(dirname "$file")/tailscale-setup.json" "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/tailscale-setup.json"; do
+        if [ -e "$state" ] || [ -L "$state" ]; then
+            phase="$("$(relay_binary)" tailscale-state get "$state" phase)" || return 1
+            [ "$phase" = removed ] || { printf 'tailscale\n'; return 0; }
+        fi
+    done
+    printf 'legacy\n'
+}
+
+# All Linux lifecycle writers share the same open-file-description lock. Legacy
+# custom layouts may use an owned non-writable directory; Tailscale additionally
+# requires its default mode-0700 directory. No permission repair is implicit.
+relay_acquire_setup_lock() {
+    local directory="$1" lock fd identity inherited="${HERDR_RELAY_SETUP_LOCK_FD:-}" previous_umask mode
+    [ "$(uname -s)" = Linux ] || return 0
+    command -v flock >/dev/null || { echo 'flock is required for relay lifecycle changes.' >&2; return 1; }
+    if [ ! -d "$directory" ]; then (umask 077; mkdir -p "$directory") || return 1; fi
+    directory="$(cd "$directory" && pwd -P)" || return 1
+    mode="$(stat -c %a "$directory")" || return 1
+    [ "$(stat -c %u "$directory")" = "$EUID" ] && (( (8#$mode & 0022) == 0 )) || { echo 'Unsafe relay configuration directory for lifecycle locking.' >&2; return 1; }
+    lock="$directory/.setup.lock"
+    if [ -e "$lock" ] || [ -L "$lock" ]; then
+        [ -f "$lock" ] && [ ! -L "$lock" ] && [ "$(stat -c '%u:%a:%h' "$lock")" = "$EUID:600:1" ] || return 1
+    fi
+    if [ -n "$inherited" ]; then
+        [[ "$inherited" =~ ^[0-9]+$ ]] || return 1
+        identity="$(stat -c '%d:%i' "$lock")" || return 1
+        [ "$(stat -Lc '%d:%i' "/proc/$BASHPID/fd/$inherited" 2>/dev/null)" = "$identity" ] || { echo 'Inherited lifecycle lock belongs to another configuration.' >&2; return 1; }
+        flock -n "$inherited" || return 1
+        return 0
+    fi
+    previous_umask="$(umask)"; umask 077
+    if ! exec {fd}<>"$lock"; then umask "$previous_umask"; return 1; fi
+    umask "$previous_umask"
+    if [ ! -f "$lock" ] || [ -L "$lock" ] || [ "$(stat -c '%u:%a:%h' "$lock")" != "$EUID:600:1" ] ||
+       [ "$(stat -Lc '%d:%i' "/proc/$BASHPID/fd/$fd")" != "$(stat -c '%d:%i' "$lock")" ] || ! flock -n "$fd"; then
+        exec {fd}>&-
+        echo 'Another relay lifecycle change is in progress, or its lock is unsafe.' >&2
+        return 1
+    fi
+    export HERDR_RELAY_SETUP_LOCK_FD="$fd"
+}
+
+# Close this process's copy, never unlock the shared open-file description:
+# another coordinating ancestor may still own it. Long-lived children must not
+# inherit a lifecycle lease or an unusable numeric descriptor in their env.
+relay_drop_setup_lock() {
+    local fd="${HERDR_RELAY_SETUP_LOCK_FD:-}" identity
+    [ "$(uname -s)" = Linux ] || { unset HERDR_RELAY_SETUP_LOCK_FD; return 0; }
+    [ -n "$fd" ] || return 0
+    [[ "$fd" =~ ^[0-9]+$ ]] || return 1
+    identity="$(stat -c '%d:%i' "$1/.setup.lock")" || return 1
+    [ "$(stat -Lc '%d:%i' "/proc/$BASHPID/fd/$fd" 2>/dev/null)" = "$identity" ] || return 1
+    exec {fd}>&-
+    unset HERDR_RELAY_SETUP_LOCK_FD
+}
+
+relay_require_legacy_transport() {
+    local file="$1" mode
+    mode="$(relay_connection_mode "$file")" || return 1
+    [ "$mode" != tailscale ] || { echo 'Tailscale is selected. Use its setup/service actions; teardown and explicitly choose an alternative before changing transport.' >&2; return 1; }
+    relay_acquire_setup_lock "$(dirname "$file")" || return 1
+    mode="$(relay_connection_mode "$file")" || return 1
+    [ "$mode" != tailscale ] || { echo 'Transport changed while acquiring the lifecycle lock; aborting.' >&2; return 1; }
+}
+
 installed_service_env_file() {
-    local service_file
+    local service_file label
 
     case "$(uname -s)" in
         Linux)
-            service_file="$HOME/.config/systemd/user/herdr-mobile-relay.service"
+            label="$(linux_relay_service_label)" || return 1
+            if [ "$label" = herdr-mobile-relay-tailscale.service ]; then
+                printf '%s\n' "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/relay.env"
+                return 0
+            fi
+            service_file="$HOME/.config/systemd/user/$label"
             if [ -r "$service_file" ]; then
                 systemd_field "$service_file" Environment
             fi
@@ -504,8 +664,9 @@ installed_relay_service_active() {
             launchd_service_loaded "gui/$(id -u)/com.herdr-mobile-relay.service"
             ;;
         Linux)
-            command -v systemctl >/dev/null 2>&1 &&
-                systemctl --user is-active --quiet herdr-mobile-relay.service
+            local label
+            label="$(linux_relay_service_label)" || return 1
+            command -v systemctl >/dev/null 2>&1 && systemctl --user is-active --quiet "$label"
             ;;
         *)
             return 1
@@ -519,7 +680,18 @@ restart_installed_relay_service() {
             launchctl kickstart -k "gui/$(id -u)/com.herdr-mobile-relay.service"
             ;;
         Linux)
-            systemctl --user restart herdr-mobile-relay.service
+            local label common_dir
+            label="$(linux_relay_service_label)" || return 1
+            common_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            if [ "$label" = herdr-mobile-relay-tailscale.service ]; then
+                bash "$common_dir/tailscale-control.sh" restart
+            else
+                local env_file
+                env_file="$(relay_env_path "$common_dir")" || return 1
+                relay_acquire_setup_lock "$(dirname "$env_file")" || return 1
+                assert_linux_relay_unit "$label" "$env_file" || return 1
+                systemctl --user restart "$label"
+            fi
             ;;
         *)
             return 1

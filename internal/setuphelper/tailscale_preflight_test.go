@@ -19,6 +19,8 @@ func TestTailscaleStaticEnvironment(t *testing.T) {
 	}{
 		{"generated", "# private config\nHERDR_RELAY_TOKEN='fixture-secret'\nexport HERDR_RELAY_HOST=127.0.0.1\nHERDR_GATEWAY_URL=\n", false},
 		{"literal dollar", "HERDR_RELAY_TOKEN='literal-$-not-an-expansion'\n", false},
+		{"assignment preceding command", "HERDR_RELAY_HOST= /tmp/must-not-run\n", true},
+		{"assignment preceding quoted command", "HERDR_RELAY_HOST= 'id'\n", true},
 		{"command substitution", "HERDR_RELAY_TOKEN=$(touch /must-not-run)\n", true},
 		{"double quoted expansion", "HERDR_RELAY_TOKEN=\"$SECRET\"\n", true},
 		{"backtick", "HERDR_RELAY_TOKEN=`id`\n", true},

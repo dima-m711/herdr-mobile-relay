@@ -18,6 +18,13 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HO
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$CONNECTION_MODE" = tailscale ]; then
+    exec bash "$SCRIPT_DIR/tailscale-control.sh" restart
+fi
+relay_require_legacy_transport "$ENV_FILE"
+assert_selected_relay_definition "$ENV_FILE"
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 export HERDR_RELAY_ENV="$ENV_FILE"
 
@@ -98,7 +105,7 @@ fi
 
 # 1. Start the verified packaged relay.
 echo "▸ Starting relay on $HOST:$PORT..."
-HERDR_GITHUB_TOKEN_FILE="$RELAY_UPDATER_TOKEN_FILE" "$RELAY_BIN" serve &
+(relay_drop_setup_lock "$(dirname "$ENV_FILE")"; export HERDR_GITHUB_TOKEN_FILE="$RELAY_UPDATER_TOKEN_FILE"; exec "$RELAY_BIN" serve) &
 RELAY_PID=$!
 sleep 2
 
@@ -145,11 +152,12 @@ if [ -n "$GATEWAY_URL" ]; then
     echo "  Token:      $HERDR_RELAY_TOKEN"
     echo ""
 
+    relay_drop_setup_lock "$(dirname "$ENV_FILE")"
     wait "$RELAY_PID"
 elif command -v cloudflared >/dev/null 2>&1; then
     echo "▸ Starting Cloudflare tunnel..."
     LOG_FILE="$(mktemp "${TMPDIR:-/tmp}/herdr-cloudflared.XXXXXX")"
-    (unset HERDR_GITHUB_TOKEN_FILE; exec cloudflared tunnel --config /dev/null --url "http://$TUNNEL_TARGET_HOST:$PORT") >"$LOG_FILE" 2>&1 &
+    (relay_drop_setup_lock "$(dirname "$ENV_FILE")"; unset HERDR_GITHUB_TOKEN_FILE; exec cloudflared tunnel --config /dev/null --url "http://$TUNNEL_TARGET_HOST:$PORT") >"$LOG_FILE" 2>&1 &
     TUNNEL_PID=$!
 
     URL=""
@@ -232,6 +240,7 @@ elif command -v cloudflared >/dev/null 2>&1; then
     echo "  Token:      $HERDR_RELAY_TOKEN"
     echo ""
 
+    relay_drop_setup_lock "$(dirname "$ENV_FILE")"
     # Watch both processes; macOS ships bash 3.2, which lacks wait -n, so poll.
     # Without this, a dead relay would leave the tunnel serving 502s silently.
     while kill -0 "$RELAY_PID" 2>/dev/null && kill -0 "$TUNNEL_PID" 2>/dev/null; do
@@ -263,5 +272,6 @@ else
         echo "    https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/"
     fi
     echo ""
+    relay_drop_setup_lock "$(dirname "$ENV_FILE")"
     wait $RELAY_PID
 fi
