@@ -2,6 +2,16 @@
 # Source common.sh, tailscale-common.sh and native-install-transaction.sh first.
 set +x
 
+tailscale_no_pending_update() {
+    local evidence
+    for evidence in "$TAILSCALE_CONFIG_DIR"/update-recovery.*; do
+        if [ -e "$evidence" ] || [ -L "$evidence" ]; then
+            echo 'Interrupted private update requires owner review. Preserve update-recovery.* evidence, reconcile current and the verified service, then move evidence aside before another lifecycle change or invitation.' >&2
+            return 1
+        fi
+    done
+}
+
 tailscale_state_value() { "$TAILSCALE_BINARY" tailscale-state get "$TAILSCALE_STATE" "$1"; }
 tailscale_env_value() { "$TAILSCALE_BINARY" tailscale-preflight environment "${2:-$TAILSCALE_ENV}" "$1"; }
 tailscale_read_serve() {

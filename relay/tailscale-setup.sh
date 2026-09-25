@@ -50,6 +50,7 @@ if [ -e "$TAILSCALE_STATE" ] || [ -L "$TAILSCALE_STATE" ]; then
     TAILSCALE_SOCKET="$(tailscale_state_value socket)"
     tailscale_check_state_identity
     tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
+    tailscale_no_pending_update
     PHASE="$(tailscale_state_value phase)"
     if [ "$RECOVER" = true ]; then tailscale_recover; exit $?; fi
     case "$PHASE" in
@@ -161,6 +162,7 @@ tailscale_confirm
 mkdir -p "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR"
 chmod 700 "$TAILSCALE_CONFIG_DIR"
 tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
+tailscale_no_pending_update
 if [ -z "$PHASE" ]; then
     [ ! -e "$TAILSCALE_STATE" ] && [ ! -L "$TAILSCALE_STATE" ] || { echo 'Another setup attempt appeared during approval; inspect it before retrying.' >&2; exit 1; }
 else

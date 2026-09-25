@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/0cv/herdr-mobile-relay/internal/childenv"
+	"github.com/0cv/herdr-mobile-relay/internal/config"
 	"github.com/0cv/herdr-mobile-relay/internal/launchd"
 	relayrelease "github.com/0cv/herdr-mobile-relay/internal/release"
 )
@@ -42,16 +43,17 @@ var sweepWorkers = launchd.SweepWorkers
 var semverPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
 
 type Manager struct {
-	releaseRoot string
-	runtimeDir  string
-	herdrBin    string
-	version     string
-	revision    string
-	healthURL   string
-	apiBase     string
-	webBase     string
-	client      *http.Client
-	tokenFile   string
+	releaseRoot    string
+	runtimeDir     string
+	herdrBin       string
+	version        string
+	revision       string
+	healthURL      string
+	apiBase        string
+	webBase        string
+	client         *http.Client
+	tokenFile      string
+	connectionMode string
 
 	mu       sync.Mutex
 	state    State
@@ -89,7 +91,7 @@ type gitObject struct {
 	} `json:"object,omitempty"`
 }
 
-func NewManager(releaseRoot, runtimeDir, herdrBin, version, revision, healthURL string) *Manager {
+func NewManager(releaseRoot, runtimeDir, herdrBin, version, revision, healthURL string, connectionMode ...string) *Manager {
 	manager := &Manager{
 		releaseRoot: releaseRoot,
 		runtimeDir:  runtimeDir,
@@ -102,6 +104,9 @@ func NewManager(releaseRoot, runtimeDir, herdrBin, version, revision, healthURL 
 		client: &http.Client{
 			Timeout: 15 * time.Second,
 		},
+	}
+	if len(connectionMode) > 0 {
+		manager.connectionMode = connectionMode[0]
 	}
 	if tokenFile := strings.TrimSpace(os.Getenv("HERDR_GITHUB_TOKEN_FILE")); filepath.IsAbs(tokenFile) {
 		manager.tokenFile = filepath.Clean(tokenFile)
@@ -205,6 +210,9 @@ func (m *Manager) Schedule(
 ) (string, State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.connectionMode == config.ConnectionModeTailscale && deployAppFirst {
+		return "", m.publicState(m.state), errors.New("private updates do not deploy to Cloudflare; update the shared app-host relay separately")
+	}
 	current := m.loadState()
 	if current.State != "" {
 		m.state = current
@@ -231,6 +239,7 @@ func (m *Manager) Schedule(
 	}
 	jobPath := filepath.Join(m.runtimeDir, fmt.Sprintf("update-job-%d.json", time.Now().UnixNano()))
 	job := Job{
+		ConnectionMode:    m.connectionMode,
 		ReleaseRoot:       m.releaseRoot,
 		HerdrBin:          m.herdrBin,
 		TargetVersion:     m.metadata.Version,
@@ -239,6 +248,9 @@ func (m *Manager) Schedule(
 		HealthURL:         m.healthURL,
 		DeployAppFirst:    deployAppFirst,
 		ExpectedAppOrigin: expectedAppOrigin,
+	}
+	if m.connectionMode == config.ConnectionModeTailscale {
+		job.Environment = filepath.Join(m.runtimeDir, "relay.env")
 	}
 	if err := writeJSONAtomic(jobPath, job); err != nil {
 		return "", m.publicState(m.state), fmt.Errorf("persist update job: %w", err)

@@ -14,6 +14,7 @@ unset GH_TOKEN GITHUB_TOKEN HERDR_RELAY_TOKEN
 tailscale_setup_context
 TAILSCALE_BINARY="$(relay_binary)"
 tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
+tailscale_no_pending_update
 TAILSCALE_HOST="$(tailscale_state_value hostname)"
 TAILSCALE_HTTPS="$(tailscale_state_value https_port)"
 TAILSCALE_PORT="$(tailscale_state_value relay_port)"

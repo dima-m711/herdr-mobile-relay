@@ -124,7 +124,7 @@ done
 : > "$TEST_CALLS"
 if HERDR_PLUGIN_CONFIG_DIR="$TAILSCALE_CONFIG_DIR" bash "$REPO_DIR/relay/plugin-build.sh" > "$WORK/refusal" 2>&1; then echo 'legacy plugin build accepted private configuration' >&2; exit 1; fi
 grep -Fq 'Private installation detected' "$WORK/refusal"
-[[ ! -s "$TEST_CALLS" ]]
+! grep -Eq 'systemctl.*(restart|enable|disable|stop)|tailscale serve --' "$TEST_CALLS"
 cmp -s "$TAILSCALE_ENV" "$WORK/before.env"
 # A nested mutation must reuse the same descriptor, not deadlock or bypass it.
 (

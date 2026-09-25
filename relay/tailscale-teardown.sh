@@ -25,6 +25,7 @@ tailscale_no_other_services
 # authorizes inferring ownership from a matching service or endpoint.
 PHASE="$(tailscale_state_value phase)"
 tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
+tailscale_no_pending_update
 PHASE="$(tailscale_state_value phase)"
 TAILSCALE_HOST="$(tailscale_state_value hostname)"
 TAILSCALE_HTTPS="$(tailscale_state_value https_port)"

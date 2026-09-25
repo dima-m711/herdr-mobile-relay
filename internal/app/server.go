@@ -254,7 +254,7 @@ func New(cfg *config.Config, version, revision string, logger *slog.Logger) *Ser
 		historyM:            histManager,
 		conversationM:       conversationReader,
 		conversationB:       conversationBrowser,
-		updateM:             relayupdate.NewManager(cfg.ReleaseRoot, cfg.RuntimeDir, cfg.HerdrBin, version, revision, healthURL),
+		updateM:             relayupdate.NewManager(cfg.ReleaseRoot, cfg.RuntimeDir, cfg.HerdrBin, version, revision, healthURL, cfg.ConnectionMode),
 		appDeployM:          appdeploy.NewManager(cfg.RuntimeDir, cfg.WebRoot, version, revision),
 		uploadM:             uploadManager,
 		deviceAuth:          deviceStore,
