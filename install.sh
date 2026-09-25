@@ -7,7 +7,7 @@ unset herdr_download_token
 herdr_download_token=${GH_TOKEN:-${GITHUB_TOKEN:-}}
 unset GH_TOKEN GITHUB_TOKEN
 
-REPO=${HERDR_RELEASE_REPOSITORY:-0cv/herdr-mobile-relay}
+REPO=${HERDR_RELEASE_REPOSITORY:-dima-m711/herdr-mobile-relay}
 BINARY=herdr-mobile-relay
 
 info() { printf '==> %s\n' "$1" >&2; }
@@ -339,11 +339,31 @@ prepare_install_roots() {
     write_install_sentinel "$cache_root" cache
 }
 
+# Serialize release-directory publication, including staging-only callers.
+# Private lifecycle orchestration takes its config lease before this lease.
+acquire_install_lock() {
+    [ "$(uname -s)" = Linux ] || return 0
+    command -v flock >/dev/null 2>&1 || fatal "flock is required on Linux"
+    install_lock="$1/.install.lock"
+    if [ ! -e "$install_lock" ] && [ ! -L "$install_lock" ]; then
+        (umask 077; set -C; : > "$install_lock") || fatal "could not create installer lock"
+    fi
+    private_owned_file "$install_lock" || fatal "unsafe installer lock"
+    exec 9>>"$install_lock"
+    private_owned_file "$install_lock" || fatal "installer lock changed"
+    [ "$(stat -Lc '%d:%i' /proc/$$/fd/9)" = "$(stat -c '%d:%i' "$install_lock")" ] || fatal "installer lock identity changed"
+    flock -n 9 || fatal "another release installation is running"
+}
+
 main() {
     command -v tar >/dev/null 2>&1 || fatal "tar is required"
     command -v awk >/dev/null 2>&1 || fatal "awk is required"
     command -v find >/dev/null 2>&1 || fatal "find is required"
 
+    stage_only=${HERDR_RELEASE_STAGE_ONLY:-0}
+    required_mode=${HERDR_RELEASE_REQUIRED_MODE:-}
+    case "$stage_only" in 0|1) ;; *) fatal "invalid staging-only selector" ;; esac
+    case "$required_mode" in ''|tailscale) ;; *) fatal "unsupported required connection mode" ;; esac
     version=${VERSION:-${1:-}}
     [ -n "$version" ] || fatal "an exact VERSION is required; unpinned latest installs are refused"
     version=${version#v}
@@ -366,6 +386,13 @@ main() {
         config_root=${HERDR_PLUGIN_CONFIG_DIR:-"${XDG_CONFIG_HOME:-$HOME/.config}/herdr-mobile-relay"}
     fi
     cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-mobile-relay"
+    if [ "$stage_only" = 0 ]; then
+        if [ -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] ||
+           [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] ||
+           { [ -f "$config_root/relay.env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?HERDR_CONNECTION_MODE=.*tailscale' "$config_root/relay.env"; }; then
+            fatal "private installations require the Tailscale-aware plugin updater; standalone activation refused"
+        fi
+    fi
 
     work_dir=$(mktemp -d "${TMPDIR:-/tmp}/herdr-install.XXXXXX")
     trap 'on_install_exit' EXIT
@@ -430,6 +457,14 @@ main() {
 
     "$stage/$BINARY" verify-release --target "$target" "$stage" >/dev/null ||
         fatal "offline release verification failed"
+    if [ -n "$required_mode" ]; then
+        "$stage/$BINARY" verify-release --target "$target" --connection-mode "$required_mode" "$stage" >/dev/null ||
+            fatal "release does not support the required managed connection mode"
+    fi
+    if [ "$stage_only" = 0 ] && { [ -e "$config_root/tailscale-setup.json" ] || [ -L "$config_root/tailscale-setup.json" ]; }; then
+        private_phase=$("$stage/$BINARY" tailscale-state get "$config_root/tailscale-setup.json" phase) || fatal "unrecognized private setup state"
+        [ "$private_phase" = removed ] || fatal "private setup is active or incomplete; use its updater or recovery action"
+    fi
     manifest_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$stage/release-manifest.json" | head -1)
     revision=$(sed -n 's/^[[:space:]]*"revision":[[:space:]]*"\([^"]*\)".*/\1/p' "$stage/release-manifest.json" | head -1)
     [ "$manifest_version" = "$version" ] || fatal "release manifest version mismatch"
@@ -446,8 +481,14 @@ main() {
             *) previous_dir="$release_root/$previous_link" ;;
         esac
     fi
-    prepare_install_roots "$release_root" "$config_root" "$cache_root"
-    mkdir -p "$releases_dir" "$shim_dir"
+    if [ "$stage_only" = 1 ]; then
+        write_install_sentinel "$release_root" new
+    else
+        prepare_install_roots "$release_root" "$config_root" "$cache_root"
+    fi
+    acquire_install_lock "$release_root"
+    mkdir -p "$releases_dir"
+    if [ "$stage_only" = 0 ]; then mkdir -p "$shim_dir"; fi
     chmod 700 "$release_root" "$releases_dir"
     if [ -e "$final_dir" ]; then
         "$stage/$BINARY" verify-release --target "$target" "$final_dir" >/dev/null ||
@@ -457,6 +498,11 @@ main() {
     fi
     "$final_dir/$BINARY" seal-release "$final_dir" ||
         fatal "could not seal installed release directory"
+    if [ "$stage_only" = 1 ]; then
+        info "Verified release staged without activation: $final_dir"
+        printf '%s\n' "$final_dir"
+        return 0
+    fi
     if [ -n "$previous_dir" ]; then
         "$final_dir/$BINARY" prune-releases "$release_root" "$final_dir" "$previous_dir" ||
             fatal "could not prune obsolete releases"

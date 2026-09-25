@@ -127,6 +127,7 @@ shell-check:
 	sh tests/test_plugin_recovery.sh
 	bash tests/test_native_install.sh
 	sh tests/test_release_scripts.sh
+	bash tests/test_private_release_stage.sh
 	bash tests/test_uninstall.sh
 	bash tests/test_speech_voices.sh
 	tests/test_stable_setup.sh

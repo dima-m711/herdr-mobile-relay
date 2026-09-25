@@ -24,6 +24,8 @@ const (
 
 type Manifest struct {
 	Schema          int               `json:"schema"`
+	Repository      string            `json:"repository,omitempty"`
+	TailscaleSetup  int               `json:"tailscale_setup,omitempty"`
 	Version         string            `json:"version"`
 	Revision        string            `json:"revision"`
 	Target          string            `json:"target"`
@@ -71,6 +73,11 @@ func Verify(root, expectedTarget string) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("release target %q does not match %q", manifest.Target, expectedTarget)
 	}
 
+	if manifest.TailscaleSetup != 0 {
+		if err := ValidateTailscaleRelease(manifest); err != nil {
+			return Manifest{}, err
+		}
+	}
 	listed := make(map[string]bool, len(manifest.Files))
 	for name, expected := range manifest.Files {
 		clean, err := cleanRelative(name)
@@ -235,6 +242,10 @@ func Build(root, version, revision, target string) (Manifest, error) {
 			relayprotocol.HybridTransportCapability,
 		},
 		Files: files,
+	}
+	manifest.Repository = Repository
+	if (manifest.Target == "linux/amd64" || manifest.Target == "linux/arm64") && hasTailscaleHelpers(manifest) {
+		manifest.TailscaleSetup = TailscaleSetupVersion
 	}
 	manifest.WebHash = hashFileMap(files, "web/")
 	if err := writeManifest(root, manifest); err != nil {
