@@ -292,9 +292,49 @@ func TestLoadRejectsInvalidSecondGatewayURL(t *testing.T) {
 	}
 }
 
+func TestLoadTailscalePolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		key       string
+		value     string
+		wantError bool
+	}{
+		{name: "safe"},
+		{name: "wildcard", key: "HERDR_RELAY_HOST", value: "0.0.0.0", wantError: true},
+		{name: "hostname bind", key: "HERDR_RELAY_HOST", value: "localhost", wantError: true},
+		{name: "missing key", key: "HERDR_RELAY_TOKEN", value: "", wantError: true},
+		{name: "gateway", key: "HERDR_GATEWAY_URL", value: "wss://gateway.example.test", wantError: true},
+		{name: "mapping", key: "HERDR_REACHABILITY_PORT_MAPPING", value: "1", wantError: true},
+		{name: "direct transport", key: "HERDR_TRANSPORT_FORCE_RELAY", value: "0", wantError: true},
+		{name: "pairing reset", key: "HERDR_RELAY_REARM_BOOTSTRAP", value: "1", wantError: true},
+		{name: "invalid boolean", key: "HERDR_RELAY_REARM_BOOTSTRAP", value: "not-a-bool", wantError: true},
+		{name: "unknown mode", key: "HERDR_CONNECTION_MODE", value: "typo", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateLoadEnvironment(t)
+			t.Setenv("HERDR_CONNECTION_MODE", "tailscale")
+			t.Setenv("HERDR_RELAY_TOKEN", "0123456789abcdef0123456789abcdef")
+			t.Setenv("HERDR_TRANSPORT_FORCE_RELAY", "1")
+			t.Setenv("HERDR_REACHABILITY_PORT_MAPPING", "0")
+			t.Setenv("HERDR_RELAY_REARM_BOOTSTRAP", "0")
+			if tc.key != "" {
+				t.Setenv(tc.key, tc.value)
+			}
+			_, err := Load()
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error = %v, want error %v", err, tc.wantError)
+			}
+			if err != nil && strings.Contains(err.Error(), "0123456789abcdef") {
+				t.Fatal("error exposed relay key")
+			}
+		})
+	}
+}
+
 func isolateLoadEnvironment(t *testing.T) {
 	t.Helper()
 	root := t.TempDir()
+	t.Setenv("HERDR_CONNECTION_MODE", "")
 	t.Setenv("HERDR_RELAY_HOST", "127.0.0.1")
 	t.Setenv("HERDR_RELAY_PORT", "")
 	t.Setenv("HERDR_RELAY_PLUGIN_PORT", "")

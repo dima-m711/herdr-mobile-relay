@@ -23,7 +23,12 @@ const (
 	GatewaySelectionLatency = "latency"
 )
 
+// ConnectionModeTailscale applies deployment constraints to the existing
+// encrypted WebSocket transport; it is not a new wire protocol.
+const ConnectionModeTailscale = "tailscale"
+
 type Config struct {
+	ConnectionMode string
 	Host           string
 	Port           int
 	PluginPort     int
@@ -65,17 +70,18 @@ type Config struct {
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		Host:         envOr("HERDR_RELAY_HOST", "127.0.0.1"),
-		Port:         envIntOr("HERDR_RELAY_PORT", 8375),
-		PluginPort:   envIntOr("HERDR_RELAY_PLUGIN_PORT", 8376),
-		Token:        os.Getenv("HERDR_RELAY_TOKEN"),
-		InstanceID:   os.Getenv("HERDR_RELAY_INSTANCE_ID"),
-		WebRoot:      os.Getenv("HERDR_WEB_ROOT"),
-		HerdrBin:     os.Getenv("HERDR_BIN"),
-		SocketPath:   os.Getenv("HERDR_SOCKET_PATH"),
-		PollInterval: envFloatOr("HERDR_RELAY_POLL_INTERVAL", 2.0),
-		LogFormat:    envOr("HERDR_RELAY_LOG_FORMAT", "text"),
-		ServiceName:  envOr("HERDR_RELAY_SERVICE_NAME", defaultServiceName()),
+		ConnectionMode: os.Getenv("HERDR_CONNECTION_MODE"),
+		Host:           envOr("HERDR_RELAY_HOST", "127.0.0.1"),
+		Port:           envIntOr("HERDR_RELAY_PORT", 8375),
+		PluginPort:     envIntOr("HERDR_RELAY_PLUGIN_PORT", 8376),
+		Token:          os.Getenv("HERDR_RELAY_TOKEN"),
+		InstanceID:     os.Getenv("HERDR_RELAY_INSTANCE_ID"),
+		WebRoot:        os.Getenv("HERDR_WEB_ROOT"),
+		HerdrBin:       os.Getenv("HERDR_BIN"),
+		SocketPath:     os.Getenv("HERDR_SOCKET_PATH"),
+		PollInterval:   envFloatOr("HERDR_RELAY_POLL_INTERVAL", 2.0),
+		LogFormat:      envOr("HERDR_RELAY_LOG_FORMAT", "text"),
+		ServiceName:    envOr("HERDR_RELAY_SERVICE_NAME", defaultServiceName()),
 
 		WebRTCUDPPort:       envIntOr("HERDR_WEBRTC_UDP_PORT", 0),
 		ForceRelayTransport: envBoolOr("HERDR_TRANSPORT_FORCE_RELAY", false),
@@ -132,6 +138,17 @@ func Load() (*Config, error) {
 		cfg.HerdrBin = findHerdrBin()
 	}
 
+	if cfg.ConnectionMode == ConnectionModeTailscale {
+		// Legacy loaders intentionally fall back on malformed booleans. Private
+		// mode must not silently accept a misspelled security setting.
+		for _, key := range []string{"HERDR_TRANSPORT_FORCE_RELAY", "HERDR_REACHABILITY_PORT_MAPPING", "HERDR_RELAY_REARM_BOOTSTRAP"} {
+			if raw := os.Getenv(key); raw != "" {
+				if _, err := strconv.ParseBool(raw); err != nil {
+					return nil, fmt.Errorf("invalid boolean for %s in Tailscale mode", key)
+				}
+			}
+		}
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -144,6 +161,16 @@ func (c *Config) Addr() string {
 }
 
 func (c *Config) validate() error {
+	switch c.ConnectionMode {
+	case "": // Preserve existing tunnel and gateway configuration semantics.
+	case ConnectionModeTailscale:
+		if c.Host != "127.0.0.1" || c.Token == "" || len(c.GatewayURLs) != 0 ||
+			c.PortMappingEnabled || !c.ForceRelayTransport || c.RearmBootstrap {
+			return errors.New("Tailscale mode requires 127.0.0.1, a relay key, no gateways or port mapping, forced relay transport, and no bootstrap reset")
+		}
+	default:
+		return errors.New("unsupported HERDR_CONNECTION_MODE")
+	}
 	if c.Token == "" && c.Host != "127.0.0.1" && c.Host != "::1" && c.Host != "localhost" {
 		return fmt.Errorf("refusing to bind tokenless relay to non-loopback address %s", c.Host)
 	}

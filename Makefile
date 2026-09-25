@@ -113,6 +113,7 @@ shell-check:
 	sh tests/test_download_credentials.sh
 	bash tests/test_service_credentials.sh
 	bash tests/test_common.sh
+	bash tests/test_tailscale_common.sh
 	bash tests/test_gateway_deploy.sh
 	bash tests/test_plugin_build.sh
 	sh tests/test_plugin_recovery.sh
