@@ -37,6 +37,19 @@ func TestPrivateAppOrigin(t *testing.T) {
 	}
 }
 
+func TestPrivateAppMetadata(t *testing.T) {
+	for _, input := range []string{`{"version":"0.21.3","assets":1}`, `{"version":"0.22.0","assets":2,"script":"/builds/app.js"}`} {
+		if err := ValidatePrivateAppMetadata(strings.NewReader(input)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, input := range []string{`<html>not this app</html>`, `{}`, `{"version":"v","assets":0}`, `{"version":"v","assets":1,"Assets":2}`, `{"version":"bad\nvalue","assets":1}`, `{"version":"v","assets":"1"}`} {
+		if err := ValidatePrivateAppMetadata(strings.NewReader(input)); err == nil {
+			t.Fatal("invalid app metadata accepted")
+		}
+	}
+}
+
 func TestPrivateBootstrapAcknowledgment(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "devices.json")

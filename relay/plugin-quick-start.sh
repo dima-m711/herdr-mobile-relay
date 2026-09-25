@@ -11,7 +11,10 @@ fi
 ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
 CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
 if [ "$CONNECTION_MODE" = tailscale ]; then
-    exec bash "$SCRIPT_DIR/start.sh"
+    bash "$SCRIPT_DIR/tailscale-control.sh" restart
+    if [ -t 0 ] && [ -t 1 ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh"; fi
+    echo 'Private service restarted. Open the pairing action in a private terminal to generate an invitation.'
+    exit 0
 fi
 DEFAULT_SETUP="$(relay_default_setup "$ENV_FILE")"
 if [ "$DEFAULT_SETUP" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-setup.sh"; fi
