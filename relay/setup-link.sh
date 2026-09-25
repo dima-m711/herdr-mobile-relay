@@ -8,6 +8,8 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HO
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+relay_require_legacy_transport "$ENV_FILE"
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 
 assert_service_env_matches "$ENV_FILE"

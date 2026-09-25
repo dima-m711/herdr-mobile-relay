@@ -446,8 +446,15 @@ relay_connection_mode() {
     case "${HERDR_CONNECTION_MODE:-}" in ''|tailscale) ;; *) echo 'Unknown inherited connection mode.' >&2; return 1 ;; esac
     if [ "$(uname -s)" = Linux ]; then
         case "$name" in ''|herdr-mobile-relay.service|herdr-remote.service|herdr-mobile-relay-tailscale.service) ;; *) echo 'Service setting belongs to another platform.' >&2; return 1 ;; esac
-        label="$(linux_relay_service_label)" || return 1
-        if [ -e "$HOME/.config/systemd/user/$label" ] || [ -L "$HOME/.config/systemd/user/$label" ]; then
+        if [ "${2:-}" = migration ] && [ ! -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] && [ ! -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ]; then
+            # Explicit legacy installers may reconcile both historical labels.
+            # This exception never applies to a private unit or unknown label.
+            case "${HERDR_RELAY_SERVICE_NAME:-}" in ''|herdr-mobile-relay.service|herdr-remote.service) ;; *) return 1 ;; esac
+            label="$name"
+        else
+            label="$(linux_relay_service_label)" || return 1
+        fi
+        if [ -n "$label" ] && { [ -e "$HOME/.config/systemd/user/$label" ] || [ -L "$HOME/.config/systemd/user/$label" ]; }; then
             [ -z "$name" ] || [ "$name" = "$label" ] || { echo 'Stored service identity conflicts with the selected unit.' >&2; return 1; }
         fi
     fi
@@ -511,11 +518,39 @@ relay_drop_setup_lock() {
 
 relay_require_legacy_transport() {
     local file="$1" mode
-    mode="$(relay_connection_mode "$file")" || return 1
+    mode="$(relay_connection_mode "$file" "${2:-}")" || return 1
     [ "$mode" != tailscale ] || { echo 'Tailscale is selected. Use its setup/service actions; teardown and explicitly choose an alternative before changing transport.' >&2; return 1; }
     relay_acquire_setup_lock "$(dirname "$file")" || return 1
-    mode="$(relay_connection_mode "$file")" || return 1
+    mode="$(relay_connection_mode "$file" "${2:-}")" || return 1
     [ "$mode" != tailscale ] || { echo 'Transport changed while acquiring the lifecycle lock; aborting.' >&2; return 1; }
+}
+
+relay_record_connection_method() {
+    local target="$(dirname "$1")/connection-method" stage
+    case "$2" in unselected|temporary|stable|community|own) ;; *) return 1 ;; esac
+    if [ -e "$target" ] || [ -L "$target" ]; then private_owned_file "$target" || return 1; fi
+    stage="$(umask 077; mktemp "$(dirname "$target")/.connection-method.XXXXXX")" || return 1
+    if ! printf '%s\n' "$2" > "$stage" || ! mv -f "$stage" "$target"; then rm -f "$stage"; return 1; fi
+}
+
+# Existing unmarked configurations retain their intent. New installs can mark
+# a newly-created configuration unselected; merely having Tailscale installed
+# is never evidence that an older gateway/tunnel should be replaced.
+relay_default_setup() {
+    local file="$1" mode method=''
+    mode="$(relay_connection_mode "$file")" || return 1
+    if [ "$mode" = tailscale ]; then printf 'tailscale\n'; return; fi
+    if [ "$(uname -s)" != Linux ] || [ "${HERDR_LEGACY_SETUP:-}" = 1 ] || [ "${HERDR_DEV_TUNNEL:-}" = 1 ] || [ -n "${HERDR_GATEWAY_URL:-}" ] || [ -n "${CLOUDFLARED_CONFIG:-}" ]; then printf 'legacy\n'; return; fi
+    if [ -e "$HOME/.config/systemd/user/herdr-mobile-relay.service" ] || [ -L "$HOME/.config/systemd/user/herdr-mobile-relay.service" ] || [ -e "$HOME/.config/systemd/user/herdr-remote.service" ] || [ -L "$HOME/.config/systemd/user/herdr-remote.service" ]; then printf 'legacy\n'; return; fi
+    if [ -n "$(env_file_value "$file" HERDR_GATEWAY_URL)" ] || [ -n "$(env_file_value "$file" CLOUDFLARED_CONFIG)" ]; then printf 'legacy\n'; return; fi
+    if [ -e "$(dirname "$file")/connection-method" ] || [ -L "$(dirname "$file")/connection-method" ]; then
+        private_owned_file "$(dirname "$file")/connection-method" || return 1
+        [ "$(wc -c < "$(dirname "$file")/connection-method")" -le 64 ] || return 1
+        method="$(head -c 64 "$(dirname "$file")/connection-method")"
+        case "$method" in unselected) ;; temporary|stable|community|own) printf 'legacy\n'; return ;; *) echo 'Unknown connection intent; review configuration explicitly.' >&2; return 1 ;; esac
+    fi
+    if [ "$method" = unselected ] || { [ ! -e "$file" ] && [ ! -L "$file" ]; }; then printf 'tailscale\n'
+    else printf 'legacy\n'; fi
 }
 
 installed_service_env_file() {

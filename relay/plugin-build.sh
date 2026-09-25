@@ -47,6 +47,11 @@ case "$TARGET_CONFIG_ROOT" in
         ;;
 esac
 TARGET_ENV="$TARGET_CONFIG_ROOT/relay.env"
+CONNECTION_MODE="$(relay_connection_mode "$TARGET_ENV" migration)"
+if [ "$CONNECTION_MODE" = tailscale ]; then
+    echo 'Private installation detected; legacy plugin migration is disabled. Use a Tailscale-aware fork updater.' >&2
+    exit 1
+fi
 SOURCE_ENV="$(installed_service_env_file)"
 if [ -z "$SOURCE_ENV" ] && [ -n "${HERDR_RELAY_ENV:-}" ] && [ -f "$HERDR_RELAY_ENV" ]; then
     if [ "$(canonical_file_path "$HERDR_RELAY_ENV")" = "$(canonical_file_path "$TARGET_ENV")" ]; then

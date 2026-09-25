@@ -112,6 +112,20 @@ printf "HERDR_RELAY_SERVICE_NAME='sshd.service'\n" > "$TAILSCALE_ENV"
 if bash "$REPO_DIR/relay/service.sh" restart > "$WORK/output" 2>&1; then echo 'stored malicious service name accepted' >&2; exit 1; fi
 [[ ! -s "$TEST_CALLS" ]]
 cp "$WORK/before.env" "$TAILSCALE_ENV"
+# Every legacy entrypoint must reject private configuration before any service,
+# HTTP, enrollment or deployment command, not merely fail at runtime afterward.
+for script in plugin-choose-transport.sh plugin-install-service.sh stable-setup.sh stable-teardown.sh install-systemd-user-service.sh uninstall-systemd-user-service.sh install-service.sh uninstall-service.sh gateway-deploy.sh configure-app-deploy.sh change-hostname.sh herdr-mobile-relay-service.sh setup-link.sh plugin-setup-link.sh; do
+ : > "$TEST_CALLS"
+ if bash "$REPO_DIR/relay/$script" temporary < /dev/null > "$WORK/refusal" 2>&1; then echo "$script accepted private configuration" >&2; exit 1; fi
+ [[ ! -s "$TEST_CALLS" ]]
+ cmp -s "$TAILSCALE_ENV" "$WORK/before.env"
+ [[ -f "$TAILSCALE_STATE" && -f "$TAILSCALE_UNIT" ]]
+done
+: > "$TEST_CALLS"
+if HERDR_PLUGIN_CONFIG_DIR="$TAILSCALE_CONFIG_DIR" bash "$REPO_DIR/relay/plugin-build.sh" > "$WORK/refusal" 2>&1; then echo 'legacy plugin build accepted private configuration' >&2; exit 1; fi
+grep -Fq 'Private installation detected' "$WORK/refusal"
+[[ ! -s "$TEST_CALLS" ]]
+cmp -s "$TAILSCALE_ENV" "$WORK/before.env"
 # A nested mutation must reuse the same descriptor, not deadlock or bypass it.
 (
  relay_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
