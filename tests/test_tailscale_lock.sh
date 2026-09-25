@@ -6,7 +6,8 @@ if [[ "$(uname -s)" != Linux ]]; then
 fi
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/herdr-tailscale-lock.XXXXXX")"
-trap 'rm -rf "$WORK"' EXIT
+child=''
+trap 'if [ -n "$child" ]; then kill "$child" 2>/dev/null || true; wait "$child" 2>/dev/null || true; fi; rm -rf "$WORK"' EXIT
 chmod 700 "$WORK"
 export HOME="$WORK/home"
 mkdir -p "$HOME"
@@ -31,6 +32,21 @@ tailscale_acquire_setup_lock "$WORK"
 fd="$HERDR_RELAY_SETUP_LOCK_FD"
 exec {fd}>&-
 unset HERDR_RELAY_SETUP_LOCK_FD
+# A long-lived child drops only its copy; the parent still excludes writers.
+tailscale_acquire_setup_lock "$WORK"
+mkfifo "$WORK/child-exit"
+bash -c 'source "$1/relay/common.sh"; relay_drop_setup_lock "$2"; touch "$2/child-ready"; read -r _ < "$2/child-exit"' _ "$REPO_DIR" "$WORK" &
+child=$!
+for _ in {1..1000}; do [ ! -e "$WORK/child-ready" ] || break; sleep 0.01; done
+[[ -e "$WORK/child-ready" ]]
+if env -u HERDR_RELAY_SETUP_LOCK_FD bash -c 'source "$1/relay/common.sh"; relay_acquire_setup_lock "$2"' _ "$REPO_DIR" "$WORK" 2> "$WORK/error"; then echo 'child unlocked its parent lease' >&2; exit 1; fi
+relay_drop_setup_lock "$WORK"
+# The child is still alive but no longer pins the parent's lock.
+kill -0 "$child"
+bash -c 'source "$1/relay/common.sh"; relay_acquire_setup_lock "$2"' _ "$REPO_DIR" "$WORK"
+printf 'done\n' > "$WORK/child-exit"
+wait "$child"
+child=''
 rm "$WORK/.setup.lock"
 printf 'keep\n' > "$WORK/foreign"
 chmod 600 "$WORK/foreign"

@@ -8,47 +8,13 @@ set +x
 # by opening a second lock. Setup/teardown and service cutover must share it.
 # Linux only; preflight must already have approved the private config directory.
 tailscale_acquire_setup_lock() {
-    local directory="$1" lock identity fd inherited="${HERDR_RELAY_SETUP_LOCK_FD:-}"
-    lock="$directory/.setup.lock"
+    local directory="$1"
     if [ ! -d "$directory" ] || [ -L "$directory" ] ||
        [ "$(stat -c '%u:%a' "$directory" 2>/dev/null)" != "$(id -u):700" ]; then
         echo 'Setup locking requires an owned mode-0700 configuration directory.' >&2
         return 1
     fi
-    command -v flock >/dev/null 2>&1 || {
-        echo 'flock is required to serialize relay setup and service changes.' >&2
-        return 1
-    }
-    if [ -e "$lock" ] || [ -L "$lock" ]; then
-        private_owned_file "$lock" || {
-            echo 'Refusing an unsafe relay setup lock file.' >&2
-            return 1
-        }
-    fi
-    if [ -n "$inherited" ]; then
-        [[ "$inherited" =~ ^[0-9]+$ ]] || return 1
-        identity="$(stat -c '%d:%i' "$lock" 2>/dev/null)" || return 1
-        if [ "$(stat -Lc '%d:%i' "/proc/$BASHPID/fd/$inherited" 2>/dev/null)" != "$identity" ]; then
-            echo 'Inherited relay setup lock does not match this configuration.' >&2
-            return 1
-        fi
-        flock -n "$inherited" || return 1
-        return 0
-    fi
-    local previous_umask
-    previous_umask="$(umask)"
-    umask 077
-    if ! exec {fd}<>"$lock"; then
-        umask "$previous_umask"
-        return 1
-    fi
-    umask "$previous_umask"
-    if ! private_owned_file "$lock" || ! flock -n "$fd"; then
-        exec {fd}>&-
-        echo 'Another relay setup or service change is in progress, or its lock is unsafe.' >&2
-        return 1
-    fi
-    export HERDR_RELAY_SETUP_LOCK_FD="$fd"
+    relay_acquire_setup_lock "$directory"
 }
 
 # Validate defaults without mkdir/chmod, reading credentials, or touching the

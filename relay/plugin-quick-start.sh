@@ -7,6 +7,15 @@ if [ -n "${HERDR_BIN_PATH:-}" ]; then
     export HERDR_BIN="$HERDR_BIN_PATH"
 fi
 
+. "$SCRIPT_DIR/common.sh"
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$CONNECTION_MODE" = tailscale ]; then
+    exec bash "$SCRIPT_DIR/start.sh"
+fi
+relay_require_legacy_transport "$ENV_FILE"
+assert_selected_relay_definition "$ENV_FILE"
+
 echo "🐑 Herdr Mobile Relay plugin setup"
 echo ""
 echo "This pane installs missing user-level tools, creates private plugin"

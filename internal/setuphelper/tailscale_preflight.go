@@ -277,7 +277,11 @@ func ReadTailscaleEnvironment(path string) (map[string]string, error) {
 		if _, exists := values[key]; exists {
 			return nil, errors.New("relay environment contains duplicate assignments")
 		}
-		value = strings.TrimSpace(value)
+		// Whitespace after '=' ends an empty shell assignment; the following
+		// word is a command, not its value. Never normalize that into data.
+		if strings.TrimSpace(value) != value {
+			return nil, errors.New("relay environment contains a command after an assignment")
+		}
 		if len(value) > 0 && (value[0] == '\'' || value[0] == '"') {
 			quote := value[0]
 			if len(value) < 2 || value[len(value)-1] != quote {

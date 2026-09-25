@@ -8,7 +8,8 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HO
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
-ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+relay_require_legacy_transport "$ENV_FILE"
 
 echo "🐑 Herdr Mobile Relay token rotation"
 echo ""

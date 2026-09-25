@@ -7,6 +7,38 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
+TAILSCALE_REMOVED=false
+ROUTING_ENV="$(relay_env_path "$SCRIPT_DIR")"
+ROUTING_MODE="$(relay_connection_mode "$ROUTING_ENV")"
+if [ "$ROUTING_MODE" = tailscale ]; then
+    . "$SCRIPT_DIR/tailscale-common.sh"
+    . "$SCRIPT_DIR/native-install-transaction.sh"
+    . "$SCRIPT_DIR/tailscale-transaction.sh"
+    tailscale_setup_context
+    TAILSCALE_BINARY="$(relay_binary)"
+    [ "$(tailscale_state_value phase)" = removed ] || { echo 'Run Tailscale teardown first. Active or incomplete private resources and credentials will not be deleted.' >&2; exit 1; }
+    tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
+    [ "$(tailscale_state_value phase)" = removed ] || exit 1
+    TAILSCALE_HOST="$(tailscale_state_value hostname)" TAILSCALE_HTTPS="$(tailscale_state_value https_port)" TAILSCALE_PORT="$(tailscale_state_value relay_port)"
+    tailscale_check_state_identity
+    verify_tailscale_removed() {
+        [ "$(tailscale_state_value phase)" = removed ] || return 1
+        tailscale_check_state_identity || return 1
+        tailscale_no_other_services || return 1
+        [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] &&
+            [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(native_systemd_state is-enabled "$TAILSCALE_LABEL")" = false ] || return 1
+        "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT" || return 1
+        "$TAILSCALE_BINARY" tailscale-preflight ports "$TAILSCALE_PORT" "$(tailscale_env_value HERDR_RELAY_PLUGIN_PORT)" || return 1
+        if [ "$(tailscale_state_value route_ownership)" = created ]; then
+            tailscale_read_serve || return 1
+            [ "$TAILSCALE_ROUTE_STATE" = absent ] || { echo 'A previously owned endpoint reappeared; review it before deleting credentials.' >&2; return 1; }
+        fi
+    }
+    verify_tailscale_removed
+    export HERDR_RELAY_ENV="$TAILSCALE_ENV"
+    TAILSCALE_REMOVED=true
+fi
+
 RELEASE_ROOT="$(relay_release_root)"
 BIN_LINK="${HERDR_RELAY_BIN_DIR:-$HOME/.local/bin}/herdr-mobile-relay"
 
@@ -33,6 +65,10 @@ resolve_cache_dir() {
 }
 
 CONFIG_DIR="$(resolve_config_dir)"
+if [ "$TAILSCALE_REMOVED" = false ] && [ -f "$CONFIG_DIR/relay.env" ]; then
+    RESOLVED_MODE="$(relay_connection_mode "$CONFIG_DIR/relay.env")"
+    [ "$RESOLVED_MODE" != tailscale ] || { echo 'The resolved configuration is Tailscale-managed; review its teardown before deleting data.' >&2; exit 1; }
+fi
 CACHE_DIR="$(resolve_cache_dir)"
 
 # Canonicalize a path, resolving symlinks. Returns empty if path does not exist.
@@ -168,11 +204,13 @@ safe_remove_bin_link() {
 preflight_removal_target "$RELEASE_ROOT" "releases"
 preflight_removal_target "$CONFIG_DIR" "config/state"
 preflight_removal_target "$CACHE_DIR" "cache"
+if [ -d "$CONFIG_DIR" ]; then relay_acquire_setup_lock "$CONFIG_DIR"; fi
 
 echo "Herdr Mobile Relay — full uninstall"
 echo ""
 echo "This will remove:"
-echo "  Service:      herdr-mobile-relay.service (systemd/launchd)"
+if [ "$TAILSCALE_REMOVED" = true ]; then echo '  Service:      Tailscale teardown already verified; adopted routes remain'
+else echo '  Service:      herdr-mobile-relay.service (systemd/launchd)'; fi
 echo "  Releases:     $RELEASE_ROOT"
 echo "  Binary link:  $BIN_LINK"
 echo "  Config/state: $CONFIG_DIR"
@@ -185,6 +223,7 @@ case "$choice" in
 esac
 
 echo ""
+if [ "$TAILSCALE_REMOVED" = true ]; then verify_tailscale_removed; fi
 
 # Stop and remove the service — must succeed before deleting files.
 service_stopped=false
@@ -199,7 +238,9 @@ case "$(uname -s)" in
         fi
         ;;
     Linux)
-        if [ -f "$SCRIPT_DIR/uninstall-systemd-user-service.sh" ]; then
+        if [ "$TAILSCALE_REMOVED" = true ]; then
+            service_stopped=true
+        elif [ -f "$SCRIPT_DIR/uninstall-systemd-user-service.sh" ]; then
             if bash "$SCRIPT_DIR/uninstall-systemd-user-service.sh"; then
                 service_stopped=true
             fi
