@@ -21,20 +21,7 @@ if [ "$ROUTING_MODE" = tailscale ]; then
     [ "$(tailscale_state_value phase)" = removed ] || exit 1
     TAILSCALE_HOST="$(tailscale_state_value hostname)" TAILSCALE_HTTPS="$(tailscale_state_value https_port)" TAILSCALE_PORT="$(tailscale_state_value relay_port)"
     tailscale_check_state_identity
-    verify_tailscale_removed() {
-        [ "$(tailscale_state_value phase)" = removed ] || return 1
-        tailscale_check_state_identity || return 1
-        tailscale_no_other_services || return 1
-        [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] &&
-            [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(native_systemd_state is-enabled "$TAILSCALE_LABEL")" = false ] || return 1
-        "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT" || return 1
-        "$TAILSCALE_BINARY" tailscale-preflight ports "$TAILSCALE_PORT" "$(tailscale_env_value HERDR_RELAY_PLUGIN_PORT)" || return 1
-        if [ "$(tailscale_state_value route_ownership)" = created ]; then
-            tailscale_read_serve || return 1
-            [ "$TAILSCALE_ROUTE_STATE" = absent ] || { echo 'A previously owned endpoint reappeared; review it before deleting credentials.' >&2; return 1; }
-        fi
-    }
-    verify_tailscale_removed
+    tailscale_verify_removed
     export HERDR_RELAY_ENV="$TAILSCALE_ENV"
     TAILSCALE_REMOVED=true
 fi
@@ -223,7 +210,7 @@ case "$choice" in
 esac
 
 echo ""
-if [ "$TAILSCALE_REMOVED" = true ]; then verify_tailscale_removed; fi
+if [ "$TAILSCALE_REMOVED" = true ]; then tailscale_verify_removed; fi
 
 # Stop and remove the service — must succeed before deleting files.
 service_stopped=false

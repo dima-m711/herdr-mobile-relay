@@ -53,6 +53,22 @@ tailscale_check_state_identity() {
     }
 }
 
+# Shared precondition for explicit transport departure and full data removal.
+# A terminal record alone never authorizes changing a newly active resource.
+tailscale_verify_removed() {
+    [ "$(tailscale_state_value phase)" = removed ] || { echo 'Complete Tailscale teardown before changing transport or deleting data.' >&2; return 1; }
+    tailscale_check_state_identity || return 1
+    tailscale_no_other_services || return 1
+    [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] &&
+        [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(native_systemd_state is-enabled "$TAILSCALE_LABEL")" = false ] || return 1
+    "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT" || return 1
+    "$TAILSCALE_BINARY" tailscale-preflight ports "$TAILSCALE_PORT" "$(tailscale_env_value HERDR_RELAY_PLUGIN_PORT)" || return 1
+    if [ "$(tailscale_state_value route_ownership)" = created ]; then
+        tailscale_read_serve || return 1
+        [ "$TAILSCALE_ROUTE_STATE" = absent ] || { echo 'A previously owned endpoint reappeared; review it before changing transport or deleting credentials.' >&2; return 1; }
+    fi
+}
+
 tailscale_local_ready() {
     local pid healthz
     TAILSCALE_HEALTH="$(wait_for_relay_health "$TAILSCALE_PORT" 15 1 "$TAILSCALE_INSTANCE")" || return 1

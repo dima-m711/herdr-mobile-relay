@@ -24,6 +24,11 @@ fi
 # wrapper—not only the chooser—must remove a previously selected gateway before
 # stable-setup and setup-link decide which transport to configure and encode.
 ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE" migration)"
+if [ "$CONNECTION_MODE" = tailscale ]; then
+    bash "$SCRIPT_DIR/tailscale-switch.sh" stable
+    unset HERDR_CONNECTION_MODE HERDR_RELAY_SERVICE_NAME
+fi
 relay_require_legacy_transport "$ENV_FILE" migration
 export HERDR_LEGACY_SETUP=1
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
