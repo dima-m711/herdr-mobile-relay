@@ -49,6 +49,51 @@ func TestTailscaleStaticEnvironment(t *testing.T) {
 	}
 }
 
+func TestTailscaleManagedEnvironment(t *testing.T) {
+	statePath, state := tailscaleStateFixture(t)
+	if err := CreateTailscaleState(statePath, state); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(filepath.Dir(statePath), "releases")
+	values := map[string]string{
+		"HERDR_CONNECTION_MODE": "tailscale", "HERDR_RELAY_HOST": "127.0.0.1", "HERDR_TRANSPORT_FORCE_RELAY": "1", "HERDR_REACHABILITY_PORT_MAPPING": "0", "HERDR_RELAY_REARM_BOOTSTRAP": "0", "HERDR_GATEWAY_URL": "",
+		"HERDR_RELAY_PORT": "8375", "HERDR_RELAY_PLUGIN_PORT": "8376", "HERDR_SOCKET_PATH": state.Socket, "HERDR_RELAY_INSTANCE_ID": state.Instance, "HERDR_RELAY_SERVICE_NAME": filepath.Base(state.Unit), "HERDR_RELEASE_ROOT": root, "HERDR_WEB_ROOT": filepath.Join(root, "current", "web"), "HERDR_RELAY_TOKEN": strings.Repeat("a", 32),
+	}
+	write := func() {
+		t.Helper()
+		var body strings.Builder
+		for k, v := range values {
+			body.WriteString(k + "='" + v + "'\n")
+		}
+		if err := os.WriteFile(state.Environment, []byte(body.String()), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check := func() error {
+		return RunTailscalePreflight([]string{"managed-environment", state.Environment, statePath, root}, strings.NewReader(""), &bytes.Buffer{})
+	}
+	write()
+	if err := check(); err != nil {
+		t.Fatal(err)
+	}
+	for key, old := range values {
+		values[key] = "foreign"
+		write()
+		if err := check(); err == nil {
+			t.Fatalf("changed %s accepted", key)
+		}
+		values[key] = old
+	}
+	for _, key := range []string{"HERDR_RELAY_ENV", "HERDR_PLUGIN_CONFIG_DIR"} {
+		values[key] = "/foreign"
+		write()
+		if err := check(); err == nil {
+			t.Fatalf("custom %s accepted", key)
+		}
+		delete(values, key)
+	}
+}
+
 func TestTailscaleEnvironmentRefusesUnsafeFiles(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay.env")
 	if err := os.WriteFile(path, []byte("HERDR_CONNECTION_MODE=tailscale\n"), 0o644); err != nil {
@@ -197,6 +242,37 @@ func TestTailscaleListenerIdentity(t *testing.T) {
 	args[1] = "-1"
 	if err := RunTailscalePreflight(args, strings.NewReader(""), &bytes.Buffer{}); err == nil {
 		t.Fatal("invalid PID accepted")
+	}
+}
+
+func TestTailscaleNativeRecoveryRecord(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path, unit, env := filepath.Join(dir, "state"), filepath.Join(dir, "unit"), filepath.Join(dir, "relay.env")
+	body := "definition=" + unit + "\nlegacy_definition=\nenvironment=" + env + "\nactive=true\nenabled=false\nlegacy_active=false\nlegacy_enabled=false\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := RunTailscalePreflight([]string{"native-record", path, unit, env}, strings.NewReader(""), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "true\tfalse\n" {
+		t.Fatal("incorrect recovery flags")
+	}
+	if err := RunTailscalePreflight([]string{"native-record", path, unit + "foreign", env}, strings.NewReader(""), &output); err == nil {
+		t.Fatal("foreign definition accepted")
+	}
+	if err := os.WriteFile(path, []byte(body+"active=false\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunTailscalePreflight([]string{"native-record", path, unit, env}, strings.NewReader(""), &output); err == nil {
+		t.Fatal("ambiguous recovery accepted")
 	}
 }
 

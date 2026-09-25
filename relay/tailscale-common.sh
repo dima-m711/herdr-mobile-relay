@@ -84,7 +84,7 @@ tailscale_setup_context() {
         echo 'Custom XDG, plugin, environment or release paths require manual migration review; nothing changed.' >&2
         return 1
     fi
-    for directory in "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR" "$TAILSCALE_RELEASE_ROOT" "$HOME/.local/state"; do
+    for directory in "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR" "$TAILSCALE_RELEASE_ROOT" "$HOME/.local/state/herdr-mobile-relay/recovery"; do
         current="$directory"
         while [ "$current" != / ]; do
             if [ -L "$current" ] || { [ -e "$current" ] && [ ! -d "$current" ]; }; then
@@ -94,7 +94,7 @@ tailscale_setup_context() {
             current="$(dirname "$current")"
         done
     done
-    for command_name in timeout flock curl systemctl systemd-analyze; do
+    for command_name in timeout flock curl systemctl systemd-analyze sha256sum; do
         command -v "$command_name" >/dev/null 2>&1 || {
             echo "Missing setup prerequisite: $command_name (no tools were installed)." >&2
             return 1

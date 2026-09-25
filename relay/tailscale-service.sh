@@ -15,7 +15,7 @@ if ! private_owned_file "$ENV_FILE"; then
 fi
 load_relay_env "$ENV_FILE"
 set +x
-unset GH_TOKEN GITHUB_TOKEN
+unset GH_TOKEN GITHUB_TOKEN HERDR_SESSION HERDR_CLIENT_SOCKET_PATH
 if [ "${HERDR_CONNECTION_MODE:-}" != tailscale ]; then
     echo 'Tailscale service requires explicit Tailscale mode; refusing transport fallback.' >&2
     exit 78

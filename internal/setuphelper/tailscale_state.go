@@ -52,6 +52,21 @@ func RunTailscaleState(args []string, input io.Reader, output io.Writer) error {
 			Environment: args[5], Unit: args[6], Socket: args[7], Instance: args[8], RecoveryDirectory: args[9], UnrelatedDigest: args[10], RouteOwnership: args[11],
 		})
 	}
+	if len(args) == 5 && args[0] == "retry" {
+		state, err := ReadTailscaleState(args[1])
+		if err != nil {
+			return err
+		}
+		if (state.Phase != "rolled-back" && state.Phase != "removed") || (args[4] != "absent" && args[4] != "adopted") {
+			return errors.New("retry requires a confirmed rollback or teardown and a newly reviewed route")
+		}
+		previous := state
+		state.Phase, state.RecoveryDirectory, state.UnrelatedDigest, state.RouteOwnership = "prepared", args[2], args[3], args[4]
+		if err := state.validate(); err != nil {
+			return err
+		}
+		return writeTailscaleState(args[1], state, &previous)
+	}
 	if len(args) == 2 && args[0] == "create" {
 		state, err := decodeTailscaleState(input)
 		if err != nil {
@@ -88,7 +103,7 @@ func RunTailscaleState(args []string, input io.Reader, output io.Writer) error {
 		}
 		return AdvanceTailscaleState(args[1], args[2], args[3], route)
 	}
-	return errors.New("usage: tailscale-state prepare FILE HOST HTTPS_PORT RELAY_PORT ENV UNIT SOCKET INSTANCE RECOVERY DIGEST OWNERSHIP | create FILE | get FILE FIELD | advance FILE EXPECTED_PHASE NEXT_PHASE [ROUTE_OWNERSHIP]")
+	return errors.New("usage: tailscale-state prepare FILE HOST HTTPS_PORT RELAY_PORT ENV UNIT SOCKET INSTANCE RECOVERY DIGEST OWNERSHIP | create FILE | get FILE FIELD | advance FILE EXPECTED_PHASE NEXT_PHASE [ROUTE_OWNERSHIP] | retry FILE RECOVERY DIGEST OWNERSHIP")
 }
 
 func CreateTailscaleState(path string, state TailscaleSetupState) error {
@@ -136,7 +151,7 @@ func AdvanceTailscaleState(path, expected, next, route string) error {
 		"route-pending":    {"route-ready", "recovery"},
 		"route-ready":      {"verified", "recovery"},
 		"verified":         {"teardown-pending", "recovery"},
-		"recovery":         {"teardown-pending"},
+		"recovery":         {"teardown-pending", "rolled-back"},
 		"teardown-pending": {"removed", "recovery"},
 	}
 	valid := false
@@ -221,7 +236,7 @@ func (s TailscaleSetupState) validate() error {
 		if s.RouteOwnership == "absent" {
 			return errors.New("ready Tailscale state lacks route evidence")
 		}
-	case "recovery", "teardown-pending", "removed":
+	case "recovery", "rolled-back", "teardown-pending", "removed":
 	default:
 		return errors.New("unknown Tailscale setup phase")
 	}

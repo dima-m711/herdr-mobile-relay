@@ -38,6 +38,66 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 			_, err = fmt.Fprintln(output, values[args[2]])
 		}
 		return err
+	case "managed-environment":
+		if len(args) != 4 {
+			break
+		}
+		state, err := ReadTailscaleState(args[2])
+		if err != nil {
+			return err
+		}
+		if state.Environment != args[1] || !safeStatePath(args[3]) {
+			return errors.New("managed environment identity differs from setup state")
+		}
+		values, err := ReadTailscaleEnvironment(args[1])
+		if err != nil {
+			return err
+		}
+		for key, expected := range map[string]string{
+			"HERDR_CONNECTION_MODE": "tailscale", "HERDR_RELAY_HOST": "127.0.0.1", "HERDR_TRANSPORT_FORCE_RELAY": "1", "HERDR_REACHABILITY_PORT_MAPPING": "0", "HERDR_RELAY_REARM_BOOTSTRAP": "0", "HERDR_GATEWAY_URL": "",
+			"HERDR_RELAY_PORT": strconv.Itoa(state.RelayPort), "HERDR_SOCKET_PATH": state.Socket, "HERDR_RELAY_INSTANCE_ID": state.Instance, "HERDR_RELAY_SERVICE_NAME": filepath.Base(state.Unit), "HERDR_RELEASE_ROOT": args[3], "HERDR_WEB_ROOT": filepath.Join(args[3], "current", "web"),
+		} {
+			if value, exists := values[key]; !exists || value != expected {
+				return errors.New("configuration no longer matches managed Tailscale policy and identity")
+			}
+		}
+		if len(values["HERDR_RELAY_TOKEN"]) != 32 {
+			return errors.New("invalid managed relay key")
+		}
+		if _, err := tailscalePort(values["HERDR_RELAY_PLUGIN_PORT"]); err != nil {
+			return err
+		}
+		for key, expected := range map[string]string{"HERDR_RELAY_ENV": state.Environment, "HERDR_PLUGIN_CONFIG_DIR": filepath.Dir(state.Environment)} {
+			if value := values[key]; value != "" && value != expected {
+				return errors.New("custom managed configuration paths require review")
+			}
+		}
+		return nil
+	case "native-record":
+		if len(args) != 4 {
+			break
+		}
+		if err := privateStateDirectory(args[1]); err != nil {
+			return err
+		}
+		data, err := readTailscaleOwnedFile(args[1], 16384, true)
+		if err != nil {
+			return err
+		}
+		fields := map[string]string{}
+		for _, line := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+			key, value, ok := strings.Cut(line, "=")
+			if _, duplicate := fields[key]; !ok || duplicate {
+				return errors.New("invalid native recovery record")
+			}
+			fields[key] = value
+		}
+		_, hasLegacy := fields["legacy_definition"]
+		if !hasLegacy || !safeStatePath(args[2]) || !safeStatePath(args[3]) || len(fields) != 7 || fields["definition"] != args[2] || fields["environment"] != args[3] || fields["legacy_definition"] != "" || fields["legacy_active"] != "false" || fields["legacy_enabled"] != "false" || (fields["active"] != "true" && fields["active"] != "false") || (fields["enabled"] != "true" && fields["enabled"] != "false") {
+			return errors.New("native recovery does not belong to this Tailscale service")
+		}
+		_, err = fmt.Fprintf(output, "%s\t%s\n", fields["active"], fields["enabled"])
+		return err
 	case "runbook":
 		if len(args) != 3 {
 			break
@@ -99,7 +159,7 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 		}
 		return nil
 	}
-	return errors.New("usage: tailscale-preflight environment FILE [KEY] | runbook UNIT LAUNCHER | session EXECUTABLE SOCKET | ports TCP UDP | listener PID PORT [EXECUTABLE] | gateway-disabled")
+	return errors.New("usage: tailscale-preflight environment FILE [KEY] | managed-environment FILE STATE RELEASE_ROOT | native-record FILE UNIT ENV | runbook UNIT LAUNCHER | session EXECUTABLE SOCKET | ports TCP UDP | listener PID PORT [EXECUTABLE] | gateway-disabled")
 }
 
 // Verify the unit's actual process owns the loopback listening socket. Merely

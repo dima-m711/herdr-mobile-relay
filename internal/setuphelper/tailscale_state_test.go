@@ -231,6 +231,30 @@ func TestPrepareTailscaleStateArguments(t *testing.T) {
 	}
 }
 
+func TestTailscaleRetryAfterConfirmedRollback(t *testing.T) {
+	path, state := tailscaleStateFixture(t)
+	if err := CreateTailscaleState(path, state); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"retry", path, filepath.Join(filepath.Dir(path), "next-recovery"), strings.Repeat("b", 64), "absent"}
+	if err := RunTailscaleState(args, strings.NewReader(""), &bytes.Buffer{}); err == nil {
+		t.Fatal("unconfirmed rollback retried")
+	}
+	if err := AdvanceTailscaleState(path, "prepared", "recovery", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := AdvanceTailscaleState(path, "recovery", "rolled-back", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RunTailscaleState(args, strings.NewReader(""), &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadTailscaleState(path)
+	if err != nil || got.Phase != "prepared" || got.Instance != state.Instance || got.Environment != state.Environment || got.RecoveryDirectory != args[2] {
+		t.Fatalf("state=%+v, err=%v", got, err)
+	}
+}
+
 func TestRunTailscaleState(t *testing.T) {
 	path, state := tailscaleStateFixture(t)
 	input, _ := json.Marshal(state)
