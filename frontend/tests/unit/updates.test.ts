@@ -2,6 +2,7 @@ import { get } from 'svelte/store';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_ASSET_VERSION, APP_BUILD_ID, APP_VERSION } from '$lib/config';
 import {
+  MANAGED_UPDATE_COMMAND,
   acknowledgePhoneUpdate,
   appUpdateAvailable,
   beginUpdateProgress,
@@ -41,6 +42,10 @@ describe('release updates', () => {
     delete document.documentElement.dataset.herdrLoadTimedOut;
     delete document.documentElement.dataset.herdrCssReady;
     vi.restoreAllMocks();
+  });
+
+  it('keeps manual managed updates on the fork', () => {
+    expect(MANAGED_UPDATE_COMMAND).toBe('HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1 herdr plugin install dima-m711/herdr-mobile-relay --yes');
   });
 
   it('compares only strict semantic versions', () => {

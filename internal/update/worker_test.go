@@ -44,7 +44,7 @@ printf '%s\n' "$HERDR_MOBILE_RELAY_NO_AUTO_SETUP" > "$HERDR_TEST_ENV"
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := "plugin\ninstall\n0cv/herdr-mobile-relay\n--ref\n" + nextTestRevision + "\n--yes\n"
+	wantArgs := "plugin\ninstall\ndima-m711/herdr-mobile-relay\n--ref\n" + nextTestRevision + "\n--yes\n"
 	if string(args) != wantArgs {
 		t.Fatalf("Herdr arguments = %q, want %q", args, wantArgs)
 	}

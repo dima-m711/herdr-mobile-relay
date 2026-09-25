@@ -23,8 +23,8 @@ import (
 	relayrelease "github.com/0cv/herdr-mobile-relay/internal/release"
 )
 
-const canonicalAPI = "https://api.github.com/repos/0cv/herdr-mobile-relay"
-const canonicalWeb = "https://github.com/0cv/herdr-mobile-relay"
+const canonicalAPI = relayrelease.API
+const canonicalWeb = relayrelease.Web
 
 var appDeployEnvironmentKeys = [...]string{
 	"HERDR_APP_DEPLOY_ORIGIN",
