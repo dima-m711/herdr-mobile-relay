@@ -35,7 +35,7 @@ func setupEnv(t *testing.T) *TestEnv {
 	return setupEnvWithScenario(t, scenario)
 }
 
-func setupEnvWithScenario(t *testing.T, scenario string) *TestEnv {
+func setupEnvWithScenario(t *testing.T, scenario string, extraEnv ...string) *TestEnv {
 	t.Helper()
 
 	tmpDir := t.TempDir()
@@ -99,6 +99,7 @@ func setupEnvWithScenario(t *testing.T, scenario string) *TestEnv {
 		fmt.Sprintf("HERDR_SOCKET_PATH=%s", env.socketPath),
 		stubLaunchctlPath(t),
 	)
+	env.relayCmd.Env = append(env.relayCmd.Env, extraEnv...)
 	env.relayCmd.Stdout = os.Stdout
 	env.relayCmd.Stderr = os.Stderr
 
