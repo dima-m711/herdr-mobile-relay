@@ -14,6 +14,8 @@ LOG_DIR="$HOME/Library/Logs/herdr-mobile-relay"
 
 require_user_service_context
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+relay_require_legacy_transport "$ENV_FILE" migration
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 
 load_relay_env "$ENV_FILE"

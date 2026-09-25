@@ -23,6 +23,8 @@ CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
 if [ "$CONNECTION_MODE" = tailscale ]; then
     exec bash "$SCRIPT_DIR/tailscale-control.sh" restart
 fi
+DEFAULT_SETUP="$(relay_default_setup "$ENV_FILE")"
+if [ "$DEFAULT_SETUP" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-setup.sh"; fi
 relay_require_legacy_transport "$ENV_FILE"
 assert_selected_relay_definition "$ENV_FILE"
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"

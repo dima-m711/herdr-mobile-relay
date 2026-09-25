@@ -10,6 +10,10 @@ case "$ACTION" in
 esac
 ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
 MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$ACTION" = install ]; then
+    DEFAULT_SETUP="$(relay_default_setup "$ENV_FILE")"
+    if [ "$DEFAULT_SETUP" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-setup.sh"; fi
+fi
 if [ "$MODE" = tailscale ]; then
     case "$ACTION" in
         install) exec bash "$SCRIPT_DIR/tailscale-setup.sh" ;;

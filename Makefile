@@ -120,6 +120,7 @@ shell-check:
 	bash tests/test_tailscale_native.sh
 	bash tests/test_tailscale_setup.sh
 	bash tests/test_tailscale_entrypoints.sh
+	bash tests/test_tailscale_defaults.sh
 	bash tests/test_gateway_deploy.sh
 	bash tests/test_plugin_build.sh
 	sh tests/test_plugin_recovery.sh
