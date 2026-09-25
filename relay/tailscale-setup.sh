@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/tailscale-transaction.sh"
 TAILSCALE_SUDO=false TAILSCALE_KEEP_ROUTE=false ADOPT=false RECOVER=false NO_PAIR=false PORT_EXPLICIT=false
 TAILSCALE_HTTPS=8443
+APP_OVERRIDE=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --https-port) [ "$#" -ge 2 ] || exit 2; TAILSCALE_HTTPS="$2"; PORT_EXPLICIT=true; shift ;;
@@ -17,8 +18,9 @@ while [ "$#" -gt 0 ]; do
         --recover) RECOVER=true ;;
         --keep-route) TAILSCALE_KEEP_ROUTE=true ;;
         --no-pair) NO_PAIR=true ;;
+        --app-origin) [ "$#" -ge 2 ] || exit 2; APP_OVERRIDE="$2"; shift ;;
         --help|-h)
-            echo 'Usage: tailscale-setup.sh [--https-port PORT] [--adopt-runbook] [--sudo] [--no-pair]'
+            echo 'Usage: tailscale-setup.sh [--https-port PORT] [--adopt-runbook] [--sudo] [--no-pair] [--app-origin PRIVATE_HTTPS_ORIGIN]'
             echo '       tailscale-setup.sh --recover [--keep-route] [--sudo]'
             echo 'Run in a private terminal. Tailscale must already be installed and connected.'
             exit 0 ;;
@@ -33,6 +35,7 @@ tailscale_setup_context
 export HERDR_RELAY_ENV="$TAILSCALE_ENV" HERDR_RELEASE_ROOT="$TAILSCALE_RELEASE_ROOT"
 export HERDR_WEB_ROOT="$TAILSCALE_RELEASE_ROOT/current/web"
 TAILSCALE_BINARY="$(relay_binary)"
+if [ -n "$APP_OVERRIDE" ]; then APP_OVERRIDE="$("$TAILSCALE_BINARY" tailscale-pairing origin "$APP_OVERRIDE")"; fi
 [ -x "$TAILSCALE_RELEASE_ROOT/current/relay/tailscale-service.sh" ] || { echo 'Install a verified fork bundle with Tailscale support before setup.' >&2; exit 1; }
 tailscale_no_other_services
 PHASE='' OLD_RECOVERY='' SOURCE_ENV=''
@@ -59,7 +62,11 @@ if [ -e "$TAILSCALE_STATE" ] || [ -L "$TAILSCALE_STATE" ]; then
             [ "$TAILSCALE_ROUTE_STATE" = matching ] || { echo 'Saved private route is missing; inspect it before recovery.' >&2; exit 1; }
             tailscale_local_ready
             tailscale_https_ready
+            if [ -n "$APP_OVERRIDE" ] && [ "$APP_OVERRIDE" != "$(tailscale_env_value HERDR_PHONE_APP_URL)" ]; then
+                echo 'Use the private pairing app-origin action to review an existing app-origin change.' >&2; exit 1
+            fi
             echo 'Private relay is verified; existing identity and pairings are unchanged.'
+            if [ "$NO_PAIR" = false ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh"; fi
             exit 0 ;;
         rolled-back)
             OLD_RECOVERY="$(tailscale_state_value recovery_directory)"
@@ -124,10 +131,20 @@ else
     [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] || { echo 'An active Tailscale service has no recognized definition.' >&2; exit 1; }
     "$TAILSCALE_BINARY" tailscale-preflight ports "$TAILSCALE_PORT" "$TAILSCALE_PLUGIN_PORT"
 fi
+app='' origins=''
 if [ -n "$SOURCE_ENV" ]; then
     app="$(tailscale_env_value HERDR_PHONE_APP_URL "$SOURCE_ENV")"
-    [ -z "$app" ] || [ "$app" = "$TAILSCALE_ORIGIN" ] || { echo 'Existing app origin differs; preserve it through the shared-origin setup flow.' >&2; exit 1; }
+    origins="$(tailscale_env_value HERDR_ALLOWED_ORIGINS "$SOURCE_ENV")"
 fi
+if [ -z "$APP_OVERRIDE" ] && [ -z "$app" ] && [ "$NO_PAIR" = false ]; then
+    echo 'For another computer in the same phone app, enter the existing private app origin.'
+    read -r -p "Private app origin [this host: $TAILSCALE_ORIGIN]: " APP_OVERRIDE || exit 1
+fi
+APP_ORIGIN="$("$TAILSCALE_BINARY" tailscale-pairing origin "${APP_OVERRIDE:-${app:-$TAILSCALE_ORIGIN}}")"
+if [ "$APP_ORIGIN" != "$TAILSCALE_ORIGIN" ]; then tailscale_app_ready "$APP_ORIGIN"; fi
+origins="${origins:-$TAILSCALE_ORIGIN}"
+case ",$origins," in *",$APP_ORIGIN,"*) ;; *) origins="$origins,$APP_ORIGIN" ;; esac
+echo "Phone app origin: $APP_ORIGIN (must remain reachable; no automatic app-host failover)."
 printf 'Private endpoint: %s -> %s\nSelected Herdr socket: %s\n' "$TAILSCALE_ORIGIN" "$TAILSCALE_TARGET" "$TAILSCALE_SOCKET"
 echo 'Install the Tailscale-only user service; preserve existing credentials/device-auth and unrelated Serve routes.'
 echo 'Enforce loopback, Tailscale mode, empty gateway, forced relay transport, no port mapping and no bootstrap reset.'
@@ -183,8 +200,8 @@ set_env_value_atomic "$STAGED_ENV" HERDR_BIN "$selected_bin"
 set_env_value_atomic "$STAGED_ENV" HERDR_SOCKET_PATH "$TAILSCALE_SOCKET"
 set_env_value_atomic "$STAGED_ENV" HERDR_RELEASE_ROOT "$TAILSCALE_RELEASE_ROOT"
 set_env_value_atomic "$STAGED_ENV" HERDR_WEB_ROOT "$HERDR_WEB_ROOT"
-set_env_value_atomic "$STAGED_ENV" HERDR_PHONE_APP_URL "$TAILSCALE_ORIGIN"
-set_env_value_atomic "$STAGED_ENV" HERDR_ALLOWED_ORIGINS "$TAILSCALE_ORIGIN"
+set_env_value_atomic "$STAGED_ENV" HERDR_PHONE_APP_URL "$APP_ORIGIN"
+set_env_value_atomic "$STAGED_ENV" HERDR_ALLOWED_ORIGINS "$origins"
 set_env_value_atomic "$STAGED_ENV" HERDR_RELAY_SERVICE_NAME "$TAILSCALE_LABEL"
 TAILSCALE_INSTANCE="$(tailscale_env_value HERDR_RELAY_INSTANCE_ID "$STAGED_ENV")"
 route=absent; [ "$BEFORE_STATE" != matching ] || route=adopted
@@ -222,3 +239,4 @@ tailscale_https_ready
 native_install_commit
 echo 'Private HTTPS and relay identity verified. Phone authentication has not been confirmed.'
 echo 'Existing pairing data was preserved. Generate an invitation only in your private terminal.'
+if [ "$NO_PAIR" = false ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh"; fi

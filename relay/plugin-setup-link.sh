@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
 CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
-[ "$CONNECTION_MODE" != tailscale ] || { echo 'Refusing legacy pairing/app-origin selection for a private installation.' >&2; exit 1; }
+if [ "$CONNECTION_MODE" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh" --choose-app; fi
 SERVICE_ENV="$(installed_service_env_file)"
 if [ -n "$SERVICE_ENV" ]; then
     export HERDR_RELAY_ENV="$SERVICE_ENV"

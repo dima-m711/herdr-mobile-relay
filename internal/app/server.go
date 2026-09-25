@@ -207,6 +207,9 @@ func New(cfg *config.Config, version, revision string, logger *slog.Logger) *Ser
 	var deviceStoreErr error
 	if cfg.Token != "" {
 		var storeOptions []deviceauth.Option
+		if cfg.ConnectionMode == config.ConnectionModeTailscale {
+			storeOptions = append(storeOptions, deviceauth.WithExplicitBootstrapInvitation())
+		}
 		if cfg.RearmBootstrap {
 			storeOptions = append(storeOptions, deviceauth.WithBootstrapReenrollment())
 		}
@@ -274,6 +277,9 @@ func New(cfg *config.Config, version, revision string, logger *slog.Logger) *Ser
 // the previous one is stranded; starting from an empty device list keeps those
 // dead entries out of Settings instead of accumulating one per launch.
 func armBootstrap(store *deviceauth.Store, cfg *config.Config, hostname string) error {
+	if cfg.ConnectionMode == config.ConnectionModeTailscale {
+		return nil // Only a verified private-terminal request may arm an invitation.
+	}
 	if cfg.RearmBootstrap {
 		return store.ResetWithBootstrap([]byte(cfg.Token), hostname, "en")
 	}

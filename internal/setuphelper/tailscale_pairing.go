@@ -38,6 +38,23 @@ func NormalizeTailscaleOrigin(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
+// This is app reachability/shape evidence, not phone authentication or proof
+// that a remote app host ships the same version as the selected relay.
+func ValidatePrivateAppMetadata(input io.Reader) error {
+	data, err := tailscaleJSON(input)
+	if err != nil {
+		return errors.New("private app metadata is unavailable or malformed")
+	}
+	var app struct {
+		Version string `json:"version"`
+		Assets  int    `json:"assets"`
+	}
+	if json.Unmarshal(data, &app) != nil || len(app.Version) == 0 || len(app.Version) > 128 || app.Assets < 1 || strings.IndexFunc(app.Version, func(r rune) bool { return r < 33 || r == 127 }) >= 0 {
+		return errors.New("private host did not return recognized phone app metadata")
+	}
+	return nil
+}
+
 type privateInvitation struct {
 	ID       string    `json:"invitation_id"`
 	Version  uint64    `json:"version"`
@@ -138,6 +155,9 @@ func armPrivateInvitation(envPath, rawPID string, values map[string]string) erro
 // RunTailscalePairing keeps secrets out of argv and child processes. Rendering
 // reuses SetupFragment/TerminalQR, but only to the attached private terminal.
 func RunTailscalePairing(args []string, output io.Writer) error {
+	if len(args) == 1 && args[0] == "app" {
+		return ValidatePrivateAppMetadata(os.Stdin)
+	}
 	if len(args) == 2 && args[0] == "origin" {
 		origin, err := NormalizeTailscaleOrigin(args[1])
 		if err != nil {
@@ -147,7 +167,7 @@ func RunTailscalePairing(args []string, output io.Writer) error {
 		return err
 	}
 	if len(args) != 7 || args[0] != "show" {
-		return errors.New("usage: tailscale-pairing origin URL | show ENV PID APP_ORIGIN RELAY_ORIGIN LABEL COLUMNS")
+		return errors.New("usage: tailscale-pairing app | origin URL | show ENV PID APP_ORIGIN RELAY_ORIGIN LABEL COLUMNS")
 	}
 	if output != os.Stdout || runtime.GOOS != "linux" {
 		return errors.New("private invitations require an attached Linux terminal")

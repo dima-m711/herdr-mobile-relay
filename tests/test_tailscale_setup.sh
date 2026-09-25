@@ -19,7 +19,9 @@ case "$*" in
  '--user show herdr-mobile-relay-tailscale.service --property FragmentPath --value') echo "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ;;
  '--user show herdr-mobile-relay-tailscale.service --property DropInPaths --value') [[ "$FAILURE" != dropin ]] || echo '/foreign-override.conf' ;;
  '--user enable herdr-mobile-relay-tailscale.service') touch "$CASE/enabled" ;;
- '--user restart herdr-mobile-relay-tailscale.service') [[ "$FAILURE" != service ]] || exit 1; touch "$CASE/active" ;;
+ '--user restart herdr-mobile-relay-tailscale.service')
+  if [[ "$FAILURE" == kill-app-restart ]]; then kill -KILL "$PPID"; exit 137; fi
+  [[ "$FAILURE" != service ]] || exit 1; touch "$CASE/active" ;;
  '--user stop herdr-mobile-relay-tailscale.service') [[ -f "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ]] || exit 5; rm -f "$CASE/active" ;;
  '--user disable herdr-mobile-relay-tailscale.service') rm -f "$CASE/enabled" ;;
  '--user disable --now herdr-mobile-relay-tailscale.service') [[ "$FAILURE" != disable ]] || exit 1; rm -f "$CASE/active" "$CASE/enabled" ;;
@@ -31,13 +33,13 @@ cat > "$WORK/bin/tailscale" <<'STUB'
 printf 'tailscale %s\n' "$*" >> "$CASE/calls"
 case "$*" in
  version) echo 1.102.3 ;;
- 'status --json --peers=false') echo '{"BackendState":"Running","Self":{"DNSName":"mini.tailtest.ts.net."}}' ;;
+ 'status --json --peers=false') printf '{"BackendState":"Running","Self":{"DNSName":"%s."}}\n' "$FIXTURE_HOST" ;;
  'serve status --json')
   target=8375; other=9000
   [[ "$FAILURE" != conflict ]] || target=9001
   [[ ! -f "$CASE/admin-change" ]] || other=9999
   if [[ -f "$CASE/route" || "$FAILURE" == conflict ]]; then
-   printf '{"TCP":{"443":{"HTTPS":true},"8443":{"HTTPS":true}},"Web":{"other.tailtest.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:%s"}}},"mini.tailtest.ts.net:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:%s"}}}},"AllowFunnel":{"other.tailtest.ts.net:443":true}}\n' "$other" "$target"
+   printf '{"TCP":{"443":{"HTTPS":true},"8443":{"HTTPS":true}},"Web":{"other.tailtest.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:%s"}}},"%s:8443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:%s"}}}},"AllowFunnel":{"other.tailtest.ts.net:443":true}}\n' "$other" "$FIXTURE_HOST" "$target"
   else
    printf '{"TCP":{"443":{"HTTPS":true}},"Web":{"other.tailtest.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:%s"}}}},"AllowFunnel":{"other.tailtest.ts.net:443":true}}\n' "$other"
   fi ;;
@@ -53,6 +55,11 @@ esac
 STUB
 cat > "$WORK/bin/curl" <<'STUB'
 #!/bin/bash
+case "$*" in
+ *'/version.json'*)
+  [[ "$FAILURE" != app ]] || exit 7
+  printf '{"version":"fixture","assets":1}\n'; exit 0 ;;
+esac
 [[ -f "$CASE/active" ]] || exit 7
 instance="$($TS_HELPER tailscale-preflight environment "$ENV_FILE" HERDR_RELAY_INSTANCE_ID)" || exit 1
 case "$*" in
@@ -71,9 +78,11 @@ STUB
 chmod 700 "$WORK/bin/"*
 
 new_case() {
- export CASE="$WORK/$1" HOME="$WORK/$1/home" FAILURE=none
+ export CASE="$WORK/$1" HOME="$WORK/$1/home" FAILURE=none FIXTURE_HOST=mini.tailtest.ts.net
  export PATH="$WORK/bin:$BASE_PATH" HERDR_BIN="$WORK/bin/herdr" HERDR_SOCKET_PATH="$HOME/.config/herdr/herdr.sock" SHELL=/bin/bash
- unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME HERDR_RELEASE_ROOT HERDR_RELAY_ENV HERDR_PLUGIN_CONFIG_DIR HERDR_RELAY_BIN
+ unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR HERDR_RELEASE_ROOT HERDR_RELAY_ENV HERDR_PLUGIN_CONFIG_DIR HERDR_RELAY_BIN
+ mkdir -p "$HOME/.local/bin"
+ for fake in "$WORK/bin/"*; do ln -s "$fake" "$HOME/.local/bin/${fake##*/}"; done
  export ENV_FILE="$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/relay.env"
  STATE="${ENV_FILE%/*}/tailscale-setup.json"
  UNIT="$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service"
@@ -90,6 +99,12 @@ if [[ "$1" == tailscale-state && ( "$2" == prepare || "$2" == advance ) ]]; then
 fi
 case "$*" in
  'version --json') echo '{"version":"fixture","revision":"fixture"}'; exit 0 ;;
+ 'tailscale-pairing show '*)
+  [[ "$FAILURE" != arm ]] || exit 1
+  printf 'private-display %s %s\n' "$5" "$6" >> "$CASE/calls"
+  echo 'PRIVATE-PAIR-DISPLAY (synthetic fixture, no credential)'
+  [[ "$8" -ge 80 ]] || echo 'Terminal too narrow; widen and regenerate.'
+  exit 0 ;;
  'tailscale-preflight session '*|'tailscale-preflight listener '*|'tailscale-preflight ports '*) printf 'probe %s\n' "$*" >> "$CASE/calls"; exit 0 ;;
 esac
 exec "$TS_HELPER" "$@"
@@ -127,6 +142,7 @@ ENV
  touch "$CASE/active" "$CASE/enabled" "$CASE/route"
 }
 phase() { "$TS_HELPER" tailscale-state get "$STATE" phase; }
+if [[ "${TAILSCALE_FIXTURE_LIBRARY:-}" == 1 ]]; then return 0; fi
 new_case cancelled
 if run_wizard n; then echo 'cancellation accepted' >&2; exit 1; fi
 [[ ! -e "$ENV_FILE" && ! -e "$UNIT" && ! -e "$STATE" ]]

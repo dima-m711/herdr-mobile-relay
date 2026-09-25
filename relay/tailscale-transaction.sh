@@ -101,6 +101,27 @@ tailscale_https_ready() {
     return 1
 }
 
+tailscale_pairing_ready() {
+    [ "$(tailscale_state_value phase)" = verified ] || { echo 'Complete private setup before generating an invitation.' >&2; return 1; }
+    tailscale_check_state_identity || return 1
+    [ "$(tailscale_hostname)" = "$TAILSCALE_HOST" ] || { echo 'Tailscale hostname changed; review the saved endpoint and app origin.' >&2; return 1; }
+    tailscale_no_other_services || return 1
+    tailscale_check_managed_unit && tailscale_check_loaded_unit || return 1
+    "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT" || return 1
+    tailscale_read_serve || return 1
+    [ "$TAILSCALE_ROUTE_STATE" = matching ] || { echo 'Private endpoint is missing or changed; no invitation generated.' >&2; return 1; }
+    tailscale_local_ready && tailscale_https_ready
+}
+
+tailscale_app_ready() {
+    local metadata
+    metadata="$(curl -fsS --proto '=https' --max-time 5 --max-filesize 1048576 "$1/version.json" 2>/dev/null)" &&
+        printf '%s' "$metadata" | "$TAILSCALE_BINARY" tailscale-pairing app || {
+        echo 'The selected private app host is unavailable or unrecognized. Restore it; no origin failover or invitation was performed.' >&2
+        return 1
+    }
+}
+
 tailscale_change_route() {
     local action="$1"
     local -a command=(tailscale serve)

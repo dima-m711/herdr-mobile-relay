@@ -9,6 +9,8 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HO
 . "$SCRIPT_DIR/common.sh"
 
 ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$CONNECTION_MODE" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh" "$@"; fi
 relay_require_legacy_transport "$ENV_FILE"
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 
