@@ -121,7 +121,9 @@ if [ -n "$SOURCE_ENV" ]; then
     TAILSCALE_SOCKET="${saved_socket:-${HERDR_SOCKET_PATH:-$HOME/.config/herdr/herdr.sock}}"
     selected_bin="$(tailscale_env_value HERDR_BIN "$SOURCE_ENV")"
 else
-    [ ! -e "$TAILSCALE_CONFIG_DIR/device-auth" ] || { echo 'Device state exists without its environment; recover the original credentials first.' >&2; exit 1; }
+    for orphan in "$TAILSCALE_CONFIG_DIR/device-auth" "$TAILSCALE_CONFIG_DIR/.env"; do
+        [ ! -e "$orphan" ] && [ ! -L "$orphan" ] || { echo 'Identity data exists without relay.env; recover the original credentials first.' >&2; exit 1; }
+    done
     TAILSCALE_SOCKET="${HERDR_SOCKET_PATH:-$HOME/.config/herdr/herdr.sock}"
     selected_bin=''
 fi
@@ -179,6 +181,7 @@ if [ -n "$BOOTSTRAP_RELEASE" ]; then
     echo "Also stop the recognized runbook service and activate $BOOTSTRAP_RELEASE; rollback retains/restores $BOOTSTRAP_PREVIOUS."
 fi
 tailscale_confirm
+tailscale_validate_directories
 mkdir -p "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR"
 chmod 700 "$TAILSCALE_CONFIG_DIR"
 tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
@@ -189,6 +192,12 @@ else
     [ "$(tailscale_state_value phase)" = "$PHASE" ] || { echo 'Setup phase changed during approval; aborting.' >&2; exit 1; }
 fi
 # Reinspect after approval/lock acquisition, before the first resource mutation.
+tailscale_no_other_services
+if [ -z "$SOURCE_ENV" ]; then
+    for appeared in "$TAILSCALE_ENV" "$TAILSCALE_CONFIG_DIR/device-auth" "$TAILSCALE_CONFIG_DIR/.env"; do
+        [ ! -e "$appeared" ] && [ ! -L "$appeared" ] || { echo 'Identity data appeared during approval; refusing to replace it.' >&2; exit 1; }
+    done
+fi
 tailscale_read_serve
 [ "$TAILSCALE_ROUTE_STATE" = "$BEFORE_STATE" ] && [ "$TAILSCALE_DIGEST" = "$BEFORE_DIGEST" ] || { echo 'Serve changed during approval; aborting without replacement.' >&2; exit 1; }
 if [ -n "$SOURCE_ENV" ]; then
