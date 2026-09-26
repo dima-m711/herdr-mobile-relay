@@ -4,6 +4,30 @@ How relay releases are verified, activated, and rolled back, how phone-driven
 upgrades work, and which Herdr versions the relay supports. Read this before
 upgrading a relay or hosting the phone app separately.
 
+## Fork/private update boundary
+
+Release discovery, downloads and install commands in this fork target
+`dima-m711/herdr-mobile-relay`, never an upstream fallback. **No private-capable
+fork release is published by this implementation.** Commands below require a
+maintainer-published compatible fork release; upstream version numbers alone
+are not compatibility evidence.
+
+For Tailscale, a candidate must have the fork-owned `tailscale_setup=1` manifest
+contract and every required private helper. Managed updates stage and verify
+before changing `current`, hold the lifecycle lease during cutover, preserve
+unit/environment/device data/Serve and inactive or disabled state, and verify
+the selected private service after restart. Ordinary update never arms pairing.
+Rollback is guarded by current ownership; ambiguous failures keep private
+`update-recovery.*` evidence for owner reconciliation, not automatic replay.
+
+An unmanaged runbook first needs the explicit staged adoption handoff in
+[tailscale-linux.md](tailscale-linux.md#existing-approved-runbook-first-fork-bundle).
+Do not use a normal plugin update or manually switch `current` to bypass it.
+Private updates reject Cloudflare app-first deployment. Update the shared private
+app-host relay separately, keep its origin stable and reachable, and confirm the
+executing phone build independently; updating relay B does not update app host A.
+Transport-incompatible changes still require a coordinated manual rollout.
+
 ## How a release is installed
 
 The plugin installs a pre-built, checksum- and manifest-verified bundle for the
@@ -47,6 +71,9 @@ the credentials and preferences the recovery is designed to preserve.
 
 ## Upgrading from v0.19.1
 
+This historical procedure concerns legacy transports. It is not a private
+runbook adoption procedure; follow the fork/private boundary above first.
+
 Version 0.20.0 replaces E2EE v1 and the shared relay key with E2EE v2 and
 per-device credentials. The phone updater intentionally refuses this transport
 boundary because neither an app-first nor a relay-first rollout can keep the
@@ -55,7 +82,7 @@ old phone connected.
 Upgrade each relay manually, exactly as for a fresh install:
 
 ```bash
-herdr plugin install 0cv/herdr-mobile-relay
+herdr plugin install dima-m711/herdr-mobile-relay
 ```
 
 The setup menu opens by itself a moment after the install finishes. If it does
@@ -85,6 +112,8 @@ freshly printed link.
 the automatic menu; it exists for unattended upgrades, not for this one.
 
 ## The deployment-owner role
+
+This is an explicit Cloudflare alternative, not the private Tailscale path.
 
 The relay-hosted app updates with its relay. For a separately hosted Cloudflare
 Pages app, configure exactly one stable relay as deployment owner with the
@@ -154,7 +183,7 @@ signoff for a user-facing release.
 
 - **Update operation failed with `read canonical release: HTTP 403`:** an older
   relay's unauthenticated GitHub release check was rate-limited. Run
-  `HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1 herdr plugin install 0cv/herdr-mobile-relay --yes`
+  `HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1 herdr plugin install dima-m711/herdr-mobile-relay --yes`
   once on that computer as the signed-in user; current releases retry through
   the public release redirect and commit feed.
 - **Updated app still shows the previous version:** open Settings, choose
