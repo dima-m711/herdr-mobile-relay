@@ -230,6 +230,10 @@ validate_legacy_root() {
         [ -e "$legacy_entry" ] || continue
         legacy_name=${legacy_entry##*/}
         [ "$legacy_name" != ".herdr-mobile-relay-installation" ] || continue
+        if [ "$root_kind:$legacy_name" = config:.setup.lock ]; then
+            private_owned_file "$legacy_entry" || return 1
+            continue
+        fi
         legacy_root_entry_allowed "$root_kind" "$legacy_name" "$legacy_entry" || return 1
         found=true
         case "$legacy_name" in

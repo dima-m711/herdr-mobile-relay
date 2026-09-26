@@ -38,7 +38,15 @@ TARGET_CONFIG_ROOT=${HERDR_PLUGIN_CONFIG_DIR:-}
 if [ -z "$TARGET_CONFIG_ROOT" ] && command -v herdr >/dev/null 2>&1; then
     TARGET_CONFIG_ROOT="$(herdr plugin config-dir herdr-mobile-relay.events 2>/dev/null || true)"
 fi
-TARGET_CONFIG_ROOT=${TARGET_CONFIG_ROOT:-"${XDG_CONFIG_HOME:-$HOME/.config}/herdr-mobile-relay"}
+if [ -z "$TARGET_CONFIG_ROOT" ]; then
+    legacy_config="${XDG_CONFIG_HOME:-$HOME/.config}/herdr-mobile-relay"
+    if [ "$(uname -s)" = Linux ] && [ ! -e "$legacy_config" ] && [ ! -L "$legacy_config" ]; then
+        TARGET_CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}/herdr/plugins/config/herdr-mobile-relay.events"
+    else
+        TARGET_CONFIG_ROOT="$legacy_config"
+        export HERDR_LEGACY_SETUP=1
+    fi
+fi
 case "$TARGET_CONFIG_ROOT" in
     /*) ;;
     *)
@@ -58,6 +66,14 @@ if [ -z "$SOURCE_ENV" ] && [ -n "${HERDR_RELAY_ENV:-}" ] && [ -f "$HERDR_RELAY_E
     if [ "$(canonical_file_path "$HERDR_RELAY_ENV")" = "$(canonical_file_path "$TARGET_ENV")" ]; then
         SOURCE_ENV="$HERDR_RELAY_ENV"
     fi
+fi
+fresh_environment=false
+if [ ! -e "$TARGET_ENV" ] && [ ! -L "$TARGET_ENV" ] && [ -z "$SOURCE_ENV" ]; then
+    if [ -e "$TARGET_CONFIG_ROOT/.env" ] || [ -L "$TARGET_CONFIG_ROOT/.env" ] || [ -e "$TARGET_CONFIG_ROOT/device-auth" ] || [ -L "$TARGET_CONFIG_ROOT/device-auth" ]; then
+        echo 'Existing legacy environment or device state requires explicit recovery; refusing to generate a replacement identity.' >&2
+        exit 1
+    fi
+    fresh_environment=true
 fi
 ENV_FILE="$TARGET_ENV"
 HERDR_PLUGIN_CONFIG_DIR="$TARGET_CONFIG_ROOT"
@@ -215,6 +231,28 @@ if [ -e "$TARGET_CONFIG_ROOT" ]; then
     }
     target_config_existed=true
 fi
+# Only a newly created or still-empty user-owned target authorizes a deletion
+# sentinel. Never infer directory ownership from relay-looking contents.
+claim_empty=false
+if [ ! -e "$TARGET_CONFIG_ROOT" ] || [ -z "$(find "$TARGET_CONFIG_ROOT" -mindepth 1 -maxdepth 1 -print -quit)" ]; then claim_empty=true; fi
+mkdir -p "$TARGET_CONFIG_ROOT"
+[ -O "$TARGET_CONFIG_ROOT" ] && [ ! -L "$TARGET_CONFIG_ROOT" ] || exit 1
+relay_require_legacy_transport "$TARGET_ENV" migration
+[ -z "$(find "$TARGET_CONFIG_ROOT" -type l -print -quit)" ] || exit 1
+if [ -e "$TARGET_ENV" ]; then fresh_environment=false; fi
+if [ "$fresh_environment" = true ] && { [ -e "$TARGET_CONFIG_ROOT/.env" ] || [ -e "$TARGET_CONFIG_ROOT/device-auth" ]; }; then
+    echo 'Existing identity appeared during installation; review it before retrying.' >&2; exit 1
+fi
+if [ "$claim_empty" = true ] && [ -z "$(find "$TARGET_CONFIG_ROOT" -mindepth 1 -maxdepth 1 ! -name .setup.lock -print -quit)" ]; then
+    chmod 700 "$TARGET_CONFIG_ROOT"
+    sentinel_temp="$(mktemp "$TARGET_CONFIG_ROOT/.ownership.XXXXXX")"
+    printf 'product=herdr-mobile-relay\nroot=%s\n' "$(cd "$TARGET_CONFIG_ROOT" && pwd -P)" > "$sentinel_temp"
+    chmod 600 "$sentinel_temp"
+    mv -f "$sentinel_temp" "$TARGET_CONFIG_ROOT/.herdr-mobile-relay-installation"
+fi
+# Snapshot after acquiring the lease, including data created by a prior writer.
+# This directory now necessarily exists and must keep its lock during rollback.
+target_config_existed=true
 CONFIG_BACKUP=$(mktemp -d "${TMPDIR:-/tmp}/herdr-plugin-config.XXXXXX")
 if [ "$target_config_existed" = true ]; then
     cp -pR "$TARGET_CONFIG_ROOT/." "$CONFIG_BACKUP/"
@@ -227,6 +265,30 @@ restore_target_config() {
     fi
     local recovery
     recovery=$(mktemp -d "$(dirname "$TARGET_CONFIG_ROOT")/.herdr-config-recovery.XXXXXX") || return 1
+    if [ -n "${HERDR_RELAY_SETUP_LOCK_FD:-}" ]; then
+        # Keep the configuration directory and its held lock inode in place.
+        # Moving the whole directory would let another writer acquire a new
+        # lock while this rollback still restores configuration.
+        relay_acquire_setup_lock "$TARGET_CONFIG_ROOT" || return 1
+        mkdir "$recovery/failed" || return 1
+        local entry name
+        for entry in "$TARGET_CONFIG_ROOT"/* "$TARGET_CONFIG_ROOT"/.[!.]* "$TARGET_CONFIG_ROOT"/..?*; do
+            [ -e "$entry" ] || [ -L "$entry" ] || continue
+            name="${entry##*/}"
+            [ "$name" != .setup.lock ] || continue
+            if [ "$target_config_existed" = false ] && [ "$name" = .herdr-mobile-relay-installation ]; then continue; fi
+            mv "$entry" "$recovery/failed/$name" || return 1
+        done
+        if [ "$target_config_existed" = true ]; then
+            for entry in "$CONFIG_BACKUP"/* "$CONFIG_BACKUP"/.[!.]* "$CONFIG_BACKUP"/..?*; do
+                [ -e "$entry" ] || [ -L "$entry" ] || continue
+                [ "${entry##*/}" != .setup.lock ] || continue
+                cp -pR "$entry" "$TARGET_CONFIG_ROOT/" || return 1
+            done
+        fi
+        echo "herdr-mobile-relay: displaced config retained at $recovery" >&2
+        return 0
+    fi
     if [ "$target_config_existed" = true ]; then
         mkdir "$recovery/restored" &&
             cp -pR "$CONFIG_BACKUP/." "$recovery/restored/" || return 1
@@ -565,6 +627,12 @@ if [ -n "$INSTALL_TOKEN" ]; then
     ensure_relay_env "$TARGET_ENV" "" "$INSTALL_TOKEN"
 fi
 unset INSTALL_TOKEN
+if [ "$fresh_environment" = true ]; then
+    ensure_relay_env "$TARGET_ENV"
+    if [ "$PLATFORM" = Linux ] && [ "${HERDR_LEGACY_SETUP:-}" != 1 ] && [ "${HERDR_DEV_TUNNEL:-}" != 1 ] && [ -z "${HERDR_GATEWAY_URL:-}${CLOUDFLARED_CONFIG:-}" ]; then
+        relay_record_connection_method "$TARGET_ENV" unselected
+    fi
+fi
 
 # Cut over an existing service to the new release root.
 SERVICE_WRAPPER="$INSTALL_ROOT/current/relay/herdr-mobile-relay-service.sh"
@@ -655,6 +723,7 @@ schedule_setup_menu() {
     [ "${HERDR_MOBILE_RELAY_NO_AUTO_SETUP:-}" != 1 ] || return 0
     command -v herdr >/dev/null 2>&1 || return 0
     (
+        relay_drop_setup_lock "$TARGET_CONFIG_ROOT"
         sleep 2
         herdr plugin action invoke setup --plugin herdr-mobile-relay.events
     ) >/dev/null 2>&1 &
