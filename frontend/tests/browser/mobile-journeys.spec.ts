@@ -538,6 +538,92 @@ async function handshake(page: Page, index: number, overrides: Record<string, un
 
 const fedora = { id: 'fedora', label: 'Fedora', url: 'wss://fedora.example', token: '' };
 
+// Synthetic tailnet names are intercepted before DNS; no real tailnet is used.
+const privateAppOrigin = 'https://app.fixture.ts.net:8443';
+const privateRelays = [
+  { id: 'private-a', label: 'Private A', url: 'wss://a.fixture.ts.net:8443', token: '' },
+  { id: 'private-b', label: 'Private B', url: 'wss://b.fixture.ts.net:9443', token: '' },
+];
+
+async function bootPrivateApp(page: Page) {
+  await page.route('**/*', async (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== privateAppOrigin) return route.abort();
+    const response = await route.fetch({ url: `http://127.0.0.1:4173${url.pathname}${url.search}` });
+    await route.fulfill({ response });
+  });
+  // Empty seed deliberately does not overwrite persisted state on reload/reopen.
+  await boot(page, [], privateAppOrigin, { standalone: true });
+}
+
+async function seedPrivateCredentials(page: Page) {
+  await page.evaluate((relays) => {
+    localStorage.setItem('herdr_relays', JSON.stringify(relays));
+    localStorage.setItem('herdr_device_auth_v1', JSON.stringify({
+      version: 1,
+      relays: Object.fromEntries(relays.map((relay, index) => [relay.id, {
+        kind: 'credential', id: `credential-${index}`, version: 1,
+        secret: (index ? 'B' : 'A').repeat(43), deviceId: `device-${index}`,
+        role: 'controller', locale: 'en', issuedAt: 1700000000000,
+      }])),
+    }));
+  }, privateRelays);
+  return page.evaluate(() => localStorage.getItem('herdr_device_auth_v1'));
+}
+
+async function expectPrivateCredentialDials(page: Page) {
+  await expect.poll(() => socketCount(page)).toBe(2);
+  for (let index = 0; index < 2; index++) {
+    await expect.poll(async () => (await commandsForSocket(page, index))
+      .find((command) => command.type === 'e2ee_client_hello')).toMatchObject({
+      auth_kind: 'credential', auth_id: `credential-${index}`,
+    });
+  }
+  expect(await page.evaluate(() => (window as any).__relaySockets.map((socket: { url: string }) => socket.url)))
+    .toEqual(privateRelays.map((relay) => relay.url));
+  expect(new URL(page.url()).origin).toBe(privateAppOrigin);
+}
+
+test('private shared app retains independent credentials through reload and reopen', async ({ page, context }) => {
+  await bootPrivateApp(page);
+  const credentials = await seedPrivateCredentials(page);
+  await page.reload();
+  await expectPrivateCredentialDials(page);
+  expect(await page.evaluate(() => localStorage.getItem('herdr_device_auth_v1'))).toBe(credentials);
+  await page.close();
+  const reopened = await context.newPage();
+  await bootPrivateApp(reopened);
+  await expectPrivateCredentialDials(reopened);
+  expect(await reopened.evaluate(() => localStorage.getItem('herdr_device_auth_v1'))).toBe(credentials);
+});
+
+test('private relay loss retains credentials and never dials public fallback', async ({ page }) => {
+  await bootPrivateApp(page);
+  const credentials = await seedPrivateCredentials(page);
+  await page.reload();
+  await expectPrivateCredentialDials(page);
+  await page.evaluate(() => (window as any).__relayClose(1));
+  await expect.poll(() => socketCount(page)).toBeGreaterThan(2);
+  const urls = await page.evaluate(() => (window as any).__relaySockets.map((socket: { url: string }) => socket.url));
+  expect(urls.every((url: string) => privateRelays.some((relay) => url === relay.url))).toBe(true);
+  expect(await page.evaluate(() => localStorage.getItem('herdr_device_auth_v1'))).toBe(credentials);
+  expect(new URL(page.url()).origin).toBe(privateAppOrigin);
+});
+
+test('private app-host outage does not migrate origin or erase credentials', async ({ page }) => {
+  await bootPrivateApp(page);
+  const credentials = await seedPrivateCredentials(page);
+  await page.route(`${privateAppOrigin}/`, (route) => route.fulfill({ status: 503, body: 'Private app host unavailable' }));
+  const response = await page.reload();
+  expect(response?.status()).toBe(503);
+  await expect(page.getByText('Private app host unavailable')).toBeVisible();
+  expect(new URL(page.url()).origin).toBe(privateAppOrigin);
+  expect(await page.evaluate(() => localStorage.getItem('herdr_device_auth_v1'))).toBe(credentials);
+  await page.unroute(`${privateAppOrigin}/`);
+  await page.reload();
+  await expectPrivateCredentialDials(page);
+});
+
 test('guides an unpairable relay without ever dialing it', async ({ page }) => {
   // A relay key that is not a usable relay key, with no enrolled credential:
   // nothing can be presented, so the app must not spend a dial finding out.
