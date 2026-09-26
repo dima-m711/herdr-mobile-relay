@@ -26,6 +26,10 @@ case "$url" in
  https://github.com/dima-m711/herdr-mobile-relay/releases/download/v1.2.3/*.tar.gz) data="$STAGE_WORK/archive.tar.gz" ;;
  *) echo 'unexpected release owner or URL' >&2; exit 99 ;;
 esac
+if [[ "${STAGE_INTRODUCE_PRIVATE:-}" == 1 && "$data" == "$STAGE_WORK/archive.tar.gz" ]]; then
+ mkdir -p "$HOME/.config/systemd/user"
+ printf 'private setup appeared during download\n' > "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service"
+fi
 if [[ "$output" == - ]]; then cat "$data"; else cp "$data" "$output"; fi
 STUB
 for command in herdr tailscale systemctl; do
@@ -81,4 +85,38 @@ if [[ "$OS" == linux ]]; then
  flock -u 8; exec 8>&-
 fi
 [[ "$(readlink "$INSTALL_ROOT/current")" == releases/previous ]]
+if [[ "$OS" == linux ]]; then
+ # A different operation can complete private setup while an old installer downloads.
+ chmod -R u+w "$INSTALL_ROOT/releases/previous"
+ rm -rf "$INSTALL_ROOT/releases/previous"
+ cp -R "$STAGED" "$INSTALL_ROOT/releases/previous"
+ printf 'HERDR_RELAY_TOKEN=0123456789abcdef0123456789abcdef\n' > "$HERDR_RELAY_ENV"
+ if STAGE_INTRODUCE_PRIVATE=1 sh "$REPO_DIR/install.sh" 1.2.3 > "$WORK/output" 2> "$WORK/error"; then
+  echo 'standalone installer activated over private setup created during download' >&2; exit 1
+ fi
+ grep -q 'private installations require' "$WORK/error"
+ [[ "$(readlink "$INSTALL_ROOT/current")" == releases/previous ]]
+ rm "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service"
+ # A custom legacy target must not hide incomplete state in the private root.
+ printf '{}\n' > "${HERDR_RELAY_ENV%/*}/tailscale-setup.json"
+ chmod 600 "${HERDR_RELAY_ENV%/*}/tailscale-setup.json"
+ if HERDR_RELAY_ENV="$HOME/.config/custom-legacy/relay.env" sh "$REPO_DIR/install.sh" 1.2.3 > "$WORK/output" 2> "$WORK/error"; then
+  echo 'custom legacy target bypassed private setup state' >&2; exit 1
+ fi
+ grep -q 'unrecognized private setup state' "$WORK/error"
+ rm "${HERDR_RELAY_ENV%/*}/tailscale-setup.json"
+ # Same lease as first setup, including inherited-open-description reuse.
+ exec 7>> "${HERDR_RELAY_ENV%/*}/.setup.lock"
+ flock -n 7
+ if sh "$REPO_DIR/install.sh" 1.2.3 > "$WORK/output" 2> "$WORK/error"; then
+  echo 'standalone installer bypassed private lifecycle lease' >&2; exit 1
+ fi
+ grep -q 'another private lifecycle change' "$WORK/error"
+ [[ "$(readlink "$INSTALL_ROOT/current")" == releases/previous ]]
+ HERDR_RELAY_SETUP_LOCK_FD=7 sh "$REPO_DIR/install.sh" 1.2.3 > "$WORK/output" 2> "$WORK/error"
+ [[ "$(realpath "$INSTALL_ROOT/current")" == "$STAGED" ]]
+ if flock -n "${HERDR_RELAY_ENV%/*}/.setup.lock" true; then echo 'child released ancestor lease' >&2; exit 1; fi
+ flock -u 7; exec 7>&-
+ [[ "$(< "${HERDR_RELAY_ENV%/*}/device-auth/keep")" == 'existing device' ]]
+fi
 echo 'Fork-owned staging and private activation guard fixtures passed'

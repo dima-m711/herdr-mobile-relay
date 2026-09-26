@@ -279,7 +279,13 @@ write_install_sentinel() {
     if [ -e "$sentinel_root" ]; then
         [ -d "$sentinel_root" ] ||
             fatal "installation root is not a directory: $sentinel_root"
-        if [ -n "$(find "$sentinel_root" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+        if [ "$root_kind" = config ] && { [ -e "$sentinel_root/.setup.lock" ] || [ -L "$sentinel_root/.setup.lock" ]; }; then
+            private_owned_file "$sentinel_root/.setup.lock" || fatal "unsafe configuration lifecycle lock"
+            root_entry=$(find "$sentinel_root" -mindepth 1 -maxdepth 1 ! -name .setup.lock -print -quit)
+        else
+            root_entry=$(find "$sentinel_root" -mindepth 1 -maxdepth 1 -print -quit)
+        fi
+        if [ -n "$root_entry" ]; then
             case "$root_kind" in
                 config|cache)
                     validate_legacy_root "$sentinel_root" "$root_kind" ||
@@ -359,6 +365,52 @@ acquire_install_lock() {
     flock -n 9 || fatal "another release installation is running"
 }
 
+# Normal activation must exclude first-time private setup even when this
+# standalone install uses a historical/custom legacy config root. Stage-only
+# publication never takes this lease or changes configuration roots.
+acquire_private_setup_lease() {
+    [ "$(uname -s)" = Linux ] || return 0
+    command -v flock >/dev/null 2>&1 || fatal "flock is required on Linux"
+    setup_directory="$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events"
+    ancestor="$setup_directory"
+    while [ "$ancestor" != / ]; do
+        [ ! -L "$ancestor" ] && { [ ! -e "$ancestor" ] || [ -d "$ancestor" ]; } || fatal "unsafe private setup directory"
+        ancestor=$(dirname "$ancestor")
+    done
+    (umask 077; mkdir -p "$setup_directory")
+    [ "$(stat -c %u "$setup_directory")" = "$(id -u)" ] &&
+        [ "$((0$(stat -c %a "$setup_directory") & 0022))" -eq 0 ] || fatal "unsafe private setup directory permissions"
+    setup_lock="$setup_directory/.setup.lock"
+    if [ ! -e "$setup_lock" ] && [ ! -L "$setup_lock" ]; then
+        (umask 077; set -C; : > "$setup_lock") || fatal "could not create setup lock"
+    fi
+    private_owned_file "$setup_lock" || fatal "unsafe private setup lock"
+    setup_identity=$(stat -c '%d:%i' "$setup_lock")
+    setup_inherited=${HERDR_RELAY_SETUP_LOCK_FD:-}
+    case "$setup_inherited" in *[!0-9]*) fatal "invalid inherited setup lease" ;; esac
+    if [ -n "$setup_inherited" ] && [ "$(stat -Lc '%d:%i' "/proc/$$/fd/$setup_inherited" 2>/dev/null)" = "$setup_identity" ]; then
+        flock -n "$setup_inherited" || fatal "another private lifecycle change is running"
+        return
+    fi
+    exec 8>>"$setup_lock"
+    private_owned_file "$setup_lock" &&
+        [ "$(stat -Lc '%d:%i' /proc/$$/fd/8)" = "$setup_identity" ] &&
+        [ "$(stat -c '%d:%i' "$setup_lock")" = "$setup_identity" ] || fatal "private setup lock changed"
+    flock -n 8 || fatal "another private lifecycle change is running"
+}
+
+refuse_private_activation() {
+    if [ -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] ||
+       [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ]; then
+        fatal "private installations require the Tailscale-aware plugin updater; standalone activation refused"
+    fi
+    for private_config in "$config_root" "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events"; do
+        if [ -f "$private_config/relay.env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?HERDR_CONNECTION_MODE=.*tailscale' "$private_config/relay.env"; then
+            fatal "private installations require the Tailscale-aware plugin updater; standalone activation refused"
+        fi
+    done
+}
+
 main() {
     command -v tar >/dev/null 2>&1 || fatal "tar is required"
     command -v awk >/dev/null 2>&1 || fatal "awk is required"
@@ -391,11 +443,7 @@ main() {
     fi
     cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/herdr-mobile-relay"
     if [ "$stage_only" = 0 ]; then
-        if [ -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] ||
-           [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] ||
-           { [ -f "$config_root/relay.env" ] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?HERDR_CONNECTION_MODE=.*tailscale' "$config_root/relay.env"; }; then
-            fatal "private installations require the Tailscale-aware plugin updater; standalone activation refused"
-        fi
+        refuse_private_activation
     fi
 
     work_dir=$(mktemp -d "${TMPDIR:-/tmp}/herdr-install.XXXXXX")
@@ -465,9 +513,15 @@ main() {
         "$stage/$BINARY" verify-release --target "$target" --connection-mode "$required_mode" "$stage" >/dev/null ||
             fatal "release does not support the required managed connection mode"
     fi
-    if [ "$stage_only" = 0 ] && { [ -e "$config_root/tailscale-setup.json" ] || [ -L "$config_root/tailscale-setup.json" ]; }; then
-        private_phase=$("$stage/$BINARY" tailscale-state get "$config_root/tailscale-setup.json" phase) || fatal "unrecognized private setup state"
-        [ "$private_phase" = removed ] || fatal "private setup is active or incomplete; use its updater or recovery action"
+    if [ "$stage_only" = 0 ]; then
+        acquire_private_setup_lease
+        refuse_private_activation
+        for private_config in "$config_root" "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events"; do
+            if [ -e "$private_config/tailscale-setup.json" ] || [ -L "$private_config/tailscale-setup.json" ]; then
+                private_phase=$("$stage/$BINARY" tailscale-state get "$private_config/tailscale-setup.json" phase) || fatal "unrecognized private setup state"
+                [ "$private_phase" = removed ] || fatal "private setup is active or incomplete; use its updater or recovery action"
+            fi
+        done
     fi
     manifest_version=$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$stage/release-manifest.json" | head -1)
     revision=$(sed -n 's/^[[:space:]]*"revision":[[:space:]]*"\([^"]*\)".*/\1/p' "$stage/release-manifest.json" | head -1)
