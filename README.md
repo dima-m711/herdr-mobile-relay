@@ -1,12 +1,16 @@
 # Herdr Mobile Relay
 
-[![check](https://github.com/0cv/herdr-mobile-relay/actions/workflows/check.yml/badge.svg)](https://github.com/0cv/herdr-mobile-relay/actions/workflows/check.yml)
+[![check](https://github.com/dima-m711/herdr-mobile-relay/actions/workflows/check.yml/badge.svg)](https://github.com/dima-m711/herdr-mobile-relay/actions/workflows/check.yml)
+
+> **Fork development branch:** Linux defaults to private Tailscale setup; existing explicit alternatives and macOS remain supported. See [private Linux setup, adoption and updates](docs/tailscale-linux.md). No fork release is published by this work; do not substitute an upstream bundle for a private-capable fork release.
+>
+> Fork of [0cv/herdr-mobile-relay](https://github.com/0cv/herdr-mobile-relay), retaining upstream attribution and AGPL-3.0-or-later licensing.
 
 Control [Herdr](https://herdr.dev) agents from your phone. Each Linux or macOS
 computer runs its own relay; the phone connects to them and merges every agent
 into one installable web app.
 
-**Current version:** [`0.22.6`](https://github.com/0cv/herdr-mobile-relay/releases/tag/v0.22.6) · [Changelog](CHANGELOG.md)
+**Upstream base version:** [`0.22.6`](https://github.com/0cv/herdr-mobile-relay/releases/tag/v0.22.6) · [Changelog](CHANGELOG.md)
 
 > [!IMPORTANT]
 > Native Windows is not supported. WSL2 may work but is not tested.
@@ -16,7 +20,9 @@ into one installable web app.
 > encrypted transport. It cannot be installed through the phone updater:
 > [upgrade the relay manually and pair every phone again](docs/updates.md#upgrading-from-v0191).
 
-## Get started in two minutes
+## Legacy transport alternatives
+
+For this fork's private Linux default, use the [Tailscale guide](docs/tailscale-linux.md). The instructions below describe explicitly selected legacy transports, not an automatic public fallback.
 
 Requirements: Herdr 0.7.5 or newer, Git, and `curl`. Herdr 0.9.0 is
 recommended for the complete live JSON inventory and workspace-management
@@ -27,7 +33,7 @@ running local server version and protocol. A server upgrade can enable or
 disable individual actions without changing the relay release.
 
 ```bash
-herdr plugin install 0cv/herdr-mobile-relay
+herdr plugin install dima-m711/herdr-mobile-relay
 ```
 
 The setup menu opens automatically after installation.
