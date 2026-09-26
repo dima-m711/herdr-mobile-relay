@@ -7,10 +7,15 @@ the relay rather than using it.
 ## Running from a checkout
 
 ```bash
-git clone https://github.com/0cv/herdr-mobile-relay.git
+git clone https://github.com/dima-m711/herdr-mobile-relay.git
 cd herdr-mobile-relay
 make dev-tunnel
 ```
+
+`make dev-tunnel` is an explicit public Cloudflare development alternative,
+not the private Linux default. For private setup and current release availability,
+see [tailscale-linux.md](tailscale-linux.md). Do not link or deploy a development
+checkout over an installed private relay to test it.
 
 `make dev-tunnel` builds the current Go source and frontend, uses isolated ports
 and state under `relay/.dev/`, and opens a temporary tunnel. It never uses the
@@ -79,19 +84,25 @@ variables when changing these boundaries.
 
 ## Testing a release candidate
 
-Candidates are published as prereleases, which ordinary relays never install:
-their update check resolves the latest stable release only. To run one:
+This fork has not published the private-capable release from this work. A
+maintainer must prepare and verify a fork-owned bundle before any install test.
+Ordinary discovery selects stable fork releases, not upstream or prereleases.
+Use disposable HOME/XDG roots and fake Herdr/Tailscale/managers for development
+verification. Private runbook adoption uses the staged, explicit handoff in the
+private guide; do not use a historical upstream `--ref dev` recipe to bypass it.
 
-```bash
-herdr plugin install 0cv/herdr-mobile-relay --ref dev
-```
-
-Rerun that command to move to a newer candidate.
+The installed end-user bundle requires no Go, Node, jq or Python. Development
+bundle smoke tests use Python for disposable port selection. Full tests need
+Go/Bun/Node plus native browser dependencies; isolate HOME, all XDG paths,
+agent variables and PATH, retaining the original GOPATH/GOCACHE. Never allow
+version probes in fixtures to invoke real installed agent wrappers.
 
 ## Contributing
 
-Work lands on `dev`; open pull requests against it and make sure `make check`
-passes first.
+Open this fork's pull requests against `dima-m711/herdr-mobile-relay:main` and
+make sure the automated gates pass first. Do not publish a release or deploy
+over a live installation as a side effect of verification. Preserve upstream
+attribution, AGPL licensing, and the upstream Go module/import paths.
 
 ## Toolchains
 
