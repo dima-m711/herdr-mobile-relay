@@ -123,6 +123,7 @@ shell-check:
 	bash tests/test_tailscale_defaults.sh
 	bash tests/test_tailscale_pairing.sh
 	bash tests/test_tailscale_update.sh
+	bash tests/test_tailscale_bootstrap.sh
 	bash tests/test_gateway_deploy.sh
 	bash tests/test_plugin_build.sh
 	sh tests/test_plugin_recovery.sh

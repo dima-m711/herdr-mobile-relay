@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/tailscale-transaction.sh"
 TAILSCALE_SUDO=false TAILSCALE_KEEP_ROUTE=false ADOPT=false RECOVER=false NO_PAIR=false PORT_EXPLICIT=false
 TAILSCALE_HTTPS=8443
-APP_OVERRIDE=''
+APP_OVERRIDE='' BOOTSTRAP_RELEASE='' BOOTSTRAP_PREVIOUS=''
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --https-port) [ "$#" -ge 2 ] || exit 2; TAILSCALE_HTTPS="$2"; PORT_EXPLICIT=true; shift ;;
@@ -18,10 +18,12 @@ while [ "$#" -gt 0 ]; do
         --recover) RECOVER=true ;;
         --keep-route) TAILSCALE_KEEP_ROUTE=true ;;
         --no-pair) NO_PAIR=true ;;
+        --release-directory) [ "$#" -ge 2 ] || exit 2; BOOTSTRAP_RELEASE="$2"; shift ;;
         --app-origin) [ "$#" -ge 2 ] || exit 2; APP_OVERRIDE="$2"; shift ;;
         --help|-h)
             echo 'Usage: tailscale-setup.sh [--https-port PORT] [--adopt-runbook] [--sudo] [--no-pair] [--app-origin PRIVATE_HTTPS_ORIGIN]'
             echo '       tailscale-setup.sh --recover [--keep-route] [--sudo]'
+            echo 'Initial runbook adoption may add --release-directory VERIFIED_STAGED_BUNDLE (also usable with --recover).'
             echo 'Run in a private terminal. Tailscale must already be installed and connected.'
             exit 0 ;;
         *) echo 'Unknown Tailscale setup option.' >&2; exit 2 ;;
@@ -35,8 +37,21 @@ tailscale_setup_context
 export HERDR_RELAY_ENV="$TAILSCALE_ENV" HERDR_RELEASE_ROOT="$TAILSCALE_RELEASE_ROOT"
 export HERDR_WEB_ROOT="$TAILSCALE_RELEASE_ROOT/current/web"
 TAILSCALE_BINARY="$(relay_binary)"
+if [ -n "$BOOTSTRAP_RELEASE" ]; then
+    [ "$ADOPT" = true ] || [ "$RECOVER" = true ] || { echo 'A staged release is only for explicit initial runbook adoption/recovery.' >&2; exit 2; }
+    [ "$(realpath -e "$BOOTSTRAP_RELEASE")" = "$BOOTSTRAP_RELEASE" ] &&
+        [ "$(dirname "$BOOTSTRAP_RELEASE")" = "$TAILSCALE_RELEASE_ROOT/releases" ] &&
+        [ "$SCRIPT_DIR" = "$BOOTSTRAP_RELEASE/relay" ] || { echo 'Run the verified staged bundle setup script from the managed releases directory.' >&2; exit 1; }
+    TAILSCALE_BINARY="$BOOTSTRAP_RELEASE/herdr-mobile-relay"
+    "$TAILSCALE_BINARY" verify-release --connection-mode tailscale "$BOOTSTRAP_RELEASE" >/dev/null
+    export HERDR_RELAY_BIN="$TAILSCALE_BINARY"
+    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] || { echo 'Initial adoption requires the existing release symlink.' >&2; exit 1; }
+    BOOTSTRAP_PREVIOUS="$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")"
+    [ "$(dirname "$BOOTSTRAP_PREVIOUS")" = "$TAILSCALE_RELEASE_ROOT/releases" ] || exit 1
+    "$BOOTSTRAP_PREVIOUS/herdr-mobile-relay" verify-release "$BOOTSTRAP_PREVIOUS" >/dev/null
+fi
 if [ -n "$APP_OVERRIDE" ]; then APP_OVERRIDE="$("$TAILSCALE_BINARY" tailscale-pairing origin "$APP_OVERRIDE")"; fi
-[ -x "$TAILSCALE_RELEASE_ROOT/current/relay/tailscale-service.sh" ] || { echo 'Install a verified fork bundle with Tailscale support before setup.' >&2; exit 1; }
+[ -x "${BOOTSTRAP_RELEASE:-$TAILSCALE_RELEASE_ROOT/current}/relay/tailscale-service.sh" ] || { echo 'Install a verified fork bundle with Tailscale support before setup.' >&2; exit 1; }
 tailscale_no_other_services
 PHASE='' OLD_RECOVERY='' SOURCE_ENV=''
 if [ -e "$TAILSCALE_STATE" ] || [ -L "$TAILSCALE_STATE" ]; then
@@ -55,6 +70,7 @@ if [ -e "$TAILSCALE_STATE" ] || [ -L "$TAILSCALE_STATE" ]; then
     if [ "$RECOVER" = true ]; then tailscale_recover; exit $?; fi
     case "$PHASE" in
         verified)
+            [ -z "$BOOTSTRAP_RELEASE" ] || { echo 'This setup is already managed; use its private updater.' >&2; exit 1; }
             [ "$(tailscale_hostname)" = "$TAILSCALE_HOST" ] || { echo 'Tailscale hostname changed; app-origin migration requires review.' >&2; exit 1; }
             tailscale_check_managed_unit || { echo 'Managed unit changed; refusing automatic replacement.' >&2; exit 1; }
             tailscale_check_loaded_unit
@@ -132,6 +148,7 @@ else
     [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] || { echo 'An active Tailscale service has no recognized definition.' >&2; exit 1; }
     "$TAILSCALE_BINARY" tailscale-preflight ports "$TAILSCALE_PORT" "$TAILSCALE_PLUGIN_PORT"
 fi
+[ -z "$BOOTSTRAP_RELEASE" ] || [ "$UNIT_EXISTED" = true ] || { echo 'Staged bootstrap requires the recognized existing runbook unit.' >&2; exit 1; }
 app='' origins=''
 if [ -n "$SOURCE_ENV" ]; then
     app="$(tailscale_env_value HERDR_PHONE_APP_URL "$SOURCE_ENV")"
@@ -158,6 +175,9 @@ echo 'The service starts at login. Unattended boot also requires separately appr
 if [ "$BEFORE_STATE" = matching ]; then echo 'The matching existing route will be adopted, never removed by automatic rollback.'
 else echo "Configure: tailscale serve --bg --https=$TAILSCALE_HTTPS $TAILSCALE_TARGET"; echo "If this attempt fails, remove only its still-matching created route: tailscale serve --https=$TAILSCALE_HTTPS off"; fi
 [ "$TAILSCALE_SUDO" = false ] || echo 'The listed scoped Serve commands will use sudo in this terminal; no operator, ACL, Funnel or linger changes.'
+if [ -n "$BOOTSTRAP_RELEASE" ]; then
+    echo "Also stop the recognized runbook service and activate $BOOTSTRAP_RELEASE; rollback retains/restores $BOOTSTRAP_PREVIOUS."
+fi
 tailscale_confirm
 mkdir -p "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR"
 chmod 700 "$TAILSCALE_CONFIG_DIR"
@@ -180,8 +200,17 @@ if [ "$UNIT_EXISTED" = true ]; then
 else
     [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] || { echo 'A unit appeared during approval; aborting.' >&2; exit 1; }
 fi
+if [ -n "$BOOTSTRAP_RELEASE" ]; then
+    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] && [ "$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")" = "$BOOTSTRAP_PREVIOUS" ] || { echo 'Release changed during approval.' >&2; exit 1; }
+    "$TAILSCALE_BINARY" verify-release --connection-mode tailscale "$BOOTSTRAP_RELEASE" >/dev/null
+fi
 native_keep_recovery=true
 native_install_begin systemd "$TAILSCALE_UNIT" '' "$TAILSCALE_ENV" "$TAILSCALE_LABEL" ''
+if [ -n "$BOOTSTRAP_RELEASE" ]; then
+    printf '%s\n' "$BOOTSTRAP_PREVIOUS" > "$native_recovery/previous-release"
+    printf '%s\n' "$BOOTSTRAP_RELEASE" > "$native_recovery/candidate-release"
+    sync -f "$native_recovery"
+fi
 STAGED_ENV="$native_recovery/new.env"
 if [ -n "$SOURCE_ENV" ]; then
     cp -p "$SOURCE_ENV" "$STAGED_ENV"
@@ -216,7 +245,15 @@ fi
 tailscale_render_unit > "$native_recovery/new.service"
 chmod 600 "$native_recovery/new.service"
 systemd-analyze --user verify "$native_recovery/new.service"
+if [ -n "$BOOTSTRAP_RELEASE" ]; then
+    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] && [ "$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")" = "$BOOTSTRAP_PREVIOUS" ] &&
+        cmp -s "$TAILSCALE_ENV" "$native_recovery/2" && cmp -s "$TAILSCALE_UNIT" "$native_recovery/0" || { echo 'Bootstrap identity changed before cutover; preserving it.' >&2; exit 1; }
+fi
 native_changed=true
+if [ -n "$BOOTSTRAP_RELEASE" ]; then
+    systemctl --user stop "$TAILSCALE_LABEL"
+    "$TAILSCALE_BINARY" activate-release "$TAILSCALE_RELEASE_ROOT" "$BOOTSTRAP_RELEASE"
+fi
 native_stage="$(mktemp "$TAILSCALE_CONFIG_DIR/.relay-env.XXXXXX")"
 cp "$STAGED_ENV" "$native_stage"; chmod 600 "$native_stage"; mv -f "$native_stage" "$TAILSCALE_ENV"
 native_stage="$(mktemp "$TAILSCALE_UNIT_DIR/.herdr-tailscale.XXXXXX")"
@@ -241,4 +278,5 @@ tailscale_https_ready
 native_install_commit
 echo 'Private HTTPS and relay identity verified. Phone authentication has not been confirmed.'
 echo 'Existing pairing data was preserved. Generate an invitation only in your private terminal.'
+unset HERDR_RELAY_BIN
 if [ "$NO_PAIR" = false ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh"; fi

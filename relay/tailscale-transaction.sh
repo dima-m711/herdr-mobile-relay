@@ -198,6 +198,26 @@ native_install_restore_allowed() {
             return 1
         fi
     done
+    tailscale_check_release_recovery
+}
+
+tailscale_check_release_recovery() {
+    local record current
+    TAILSCALE_PREVIOUS_RELEASE='' TAILSCALE_CANDIDATE_RELEASE=''
+    [ -e "$native_recovery/previous-release" ] || [ -L "$native_recovery/previous-release" ] ||
+        [ -e "$native_recovery/candidate-release" ] || [ -L "$native_recovery/candidate-release" ] || return 0
+    record="$("$TAILSCALE_BINARY" tailscale-preflight release-record "$native_recovery" "$TAILSCALE_RELEASE_ROOT")" || return 1
+    IFS=$'\t' read -r TAILSCALE_PREVIOUS_RELEASE TAILSCALE_CANDIDATE_RELEASE <<< "$record"
+    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] || return 1
+    current="$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")" || return 1
+    [ "$current" = "$TAILSCALE_PREVIOUS_RELEASE" ] || [ "$current" = "$TAILSCALE_CANDIDATE_RELEASE" ] || { echo 'Release pointer changed externally; refusing bootstrap rollback.' >&2; return 1; }
+    "$TAILSCALE_PREVIOUS_RELEASE/herdr-mobile-relay" verify-release "$TAILSCALE_PREVIOUS_RELEASE" >/dev/null
+}
+
+native_install_restore_release() {
+    tailscale_check_release_recovery || return 1
+    [ -n "${TAILSCALE_PREVIOUS_RELEASE:-}" ] || return 0
+    "$TAILSCALE_BINARY" activate-release "$TAILSCALE_RELEASE_ROOT" "$TAILSCALE_PREVIOUS_RELEASE"
 }
 
 native_install_post_restore() {
