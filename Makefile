@@ -129,6 +129,7 @@ shell-check:
 	sh tests/test_plugin_recovery.sh
 	bash tests/test_native_install.sh
 	sh tests/test_release_scripts.sh
+	sh tests/test_release_gate.sh
 	bash tests/test_private_release_stage.sh
 	bash tests/test_uninstall.sh
 	bash tests/test_speech_voices.sh
@@ -155,7 +156,7 @@ cross-build:
 	done
 
 release-bundle-check:
-	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
+	@set -eu; tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
 	version="$$(sed -n 's/^version = "\([^"]*\)"/\1/p' herdr-plugin.toml)"; \
 	revision="$$(git rev-parse HEAD 2>/dev/null || echo test-revision)"; \
 	scripts/package-release.sh "$$version" "$$revision" "$$tmp"; \
