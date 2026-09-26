@@ -185,6 +185,7 @@ func waitForRegistration(t *testing.T, base string) map[string]any {
 type phone struct {
 	t        *testing.T
 	conn     *websocket.Conn
+	direct   bool // JSON WebSocket codec; false retains the gateway binary codec.
 	send     cipher.AEAD
 	receive  cipher.AEAD
 	sendSeq  uint64
@@ -255,6 +256,12 @@ func dialPhone(t *testing.T, env *hybridEnv) *phone {
 // writeLogical chunks one logical frame exactly like the PWA does.
 func (p *phone) writeLogical(ctx context.Context, frame []byte) {
 	p.t.Helper()
+	if p.direct {
+		if err := p.conn.Write(ctx, websocket.MessageText, frame); err != nil {
+			p.t.Fatalf("write private frame: %v", err)
+		}
+		return
+	}
 	p.chunks = framing.Chunk(p.chunks[:0], frame, framing.GatewayChunkSize)
 	for _, part := range p.chunks {
 		if err := p.conn.Write(ctx, websocket.MessageBinary, part); err != nil {
@@ -265,6 +272,13 @@ func (p *phone) writeLogical(ctx context.Context, frame []byte) {
 
 func (p *phone) readLogical(ctx context.Context) []byte {
 	p.t.Helper()
+	if p.direct {
+		kind, frame, err := p.conn.Read(ctx)
+		if err != nil || kind != websocket.MessageText {
+			p.t.Fatalf("read private frame: %v", err)
+		}
+		return frame
+	}
 	for {
 		_, part, err := p.conn.Read(ctx)
 		if err != nil {
@@ -284,7 +298,18 @@ func (p *phone) readLogical(ctx context.Context) []byte {
 }
 
 func (p *phone) handshake(ctx context.Context) {
+	p.handshakeAuth(ctx, "invitation", "bootstrap", []byte(relayKey))
+}
+
+func (p *phone) handshakeAuth(ctx context.Context, kind, id string, secret []byte) {
 	p.t.Helper()
+	authTag := func(parts ...[]byte) []byte {
+		mac := hmac.New(sha256.New, secret)
+		for _, part := range parts {
+			_, _ = mac.Write(part)
+		}
+		return mac.Sum(nil)
+	}
 	private, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
 		p.t.Fatal(err)
@@ -295,12 +320,12 @@ func (p *phone) handshake(ctx context.Context) {
 	}
 	clientPublic := private.PublicKey().Bytes()
 
-	binding := []byte("herdr-e2ee-v2 auth\x00invitation\x00bootstrap\x001\x00")
+	binding := []byte("herdr-e2ee-v2 auth\x00" + kind + "\x00" + id + "\x001\x00")
 	hello, err := json.Marshal(map[string]any{
 		"type":         "e2ee_client_hello",
 		"version":      2,
-		"auth_kind":    "invitation",
-		"auth_id":      "bootstrap",
+		"auth_kind":    kind,
+		"auth_id":      id,
 		"auth_version": 1,
 		"nonce":        base64.RawURLEncoding.EncodeToString(clientNonce),
 		"public_key":   base64.RawURLEncoding.EncodeToString(clientPublic),
@@ -404,6 +429,13 @@ func (p *phone) seal(plaintext []byte) []byte {
 	sequence := p.sendSeq
 	p.sendSeq++
 	ciphertext := p.send.Seal(nil, frameNonce(sequence), plaintext, frameAAD("c2s", sequence))
+	if p.direct {
+		frame, err := json.Marshal(map[string]any{"type": "e2ee", "version": 2, "sequence": sequence, "ciphertext": base64.RawURLEncoding.EncodeToString(ciphertext)})
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		return frame
+	}
 	frame := make([]byte, 10+len(ciphertext))
 	frame[0] = 2
 	frame[1] = 0
@@ -414,6 +446,25 @@ func (p *phone) seal(plaintext []byte) []byte {
 
 func (p *phone) open(frame []byte) []byte {
 	p.t.Helper()
+	if p.direct {
+		var encoded struct {
+			Type       string `json:"type"`
+			Version    int    `json:"version"`
+			Sequence   uint64 `json:"sequence"`
+			Ciphertext string `json:"ciphertext"`
+		}
+		if json.Unmarshal(frame, &encoded) != nil || encoded.Type != "e2ee" || encoded.Version != 2 {
+			p.t.Fatal("invalid private encrypted frame")
+		}
+		ciphertext, err := base64.RawURLEncoding.DecodeString(encoded.Ciphertext)
+		if err != nil {
+			p.t.Fatal(err)
+		}
+		frame = make([]byte, 10+len(ciphertext))
+		frame[0] = 2
+		binary.BigEndian.PutUint64(frame[2:], encoded.Sequence)
+		copy(frame[10:], ciphertext)
+	}
 	if len(frame) < 10 || frame[0] != 2 || frame[1] != 0 {
 		p.t.Fatalf("relay sent a malformed binary frame of %d bytes", len(frame))
 	}
@@ -427,14 +478,6 @@ func (p *phone) open(frame []byte) []byte {
 		p.t.Fatalf("relay frame did not authenticate: %v", err)
 	}
 	return plaintext
-}
-
-func authTag(parts ...[]byte) []byte {
-	mac := hmac.New(sha256.New, []byte(relayKey))
-	for _, part := range parts {
-		_, _ = mac.Write(part)
-	}
-	return mac.Sum(nil)
 }
 
 func newAEAD(t *testing.T, key []byte) cipher.AEAD {
