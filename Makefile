@@ -119,6 +119,7 @@ shell-check:
 	bash tests/test_tailscale_context.sh
 	bash tests/test_tailscale_native.sh
 	bash tests/test_tailscale_setup.sh
+	bash tests/test_tailscale_consent.sh
 	bash tests/test_tailscale_entrypoints.sh
 	bash tests/test_tailscale_defaults.sh
 	bash tests/test_tailscale_pairing.sh

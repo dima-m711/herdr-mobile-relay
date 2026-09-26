@@ -20,7 +20,7 @@ tailscale_acquire_setup_lock() {
 # Validate defaults without mkdir/chmod, reading credentials, or touching the
 # service. Configuration creation belongs after the human approves the summary.
 tailscale_setup_context() {
-    local directory current command_name
+    local command_name
     if [ "$(uname -s)" != Linux ]; then
         echo 'Tailscale setup currently supports Linux systemd user services only.' >&2
         return 1
@@ -50,16 +50,7 @@ tailscale_setup_context() {
         echo 'Custom XDG, plugin, environment or release paths require manual migration review; nothing changed.' >&2
         return 1
     fi
-    for directory in "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR" "$TAILSCALE_RELEASE_ROOT" "$HOME/.local/state/herdr-mobile-relay/recovery"; do
-        current="$directory"
-        while [ "$current" != / ]; do
-            if [ -L "$current" ] || { [ -e "$current" ] && [ ! -d "$current" ]; }; then
-                echo 'Refusing a symlinked or non-directory Tailscale setup path.' >&2
-                return 1
-            fi
-            current="$(dirname "$current")"
-        done
-    done
+    tailscale_validate_directories || return 1
     for command_name in timeout flock curl systemctl systemd-analyze sha256sum; do
         command -v "$command_name" >/dev/null 2>&1 || {
             echo "Missing setup prerequisite: $command_name (no tools were installed)." >&2
@@ -70,6 +61,21 @@ tailscale_setup_context() {
         echo 'The systemd user manager is unavailable. Sign in normally; do not run setup with sudo.' >&2
         return 1
     }
+}
+
+# Repeat after terminal consent: administrators do not share our lease.
+tailscale_validate_directories() {
+    local directory current
+    for directory in "$TAILSCALE_CONFIG_DIR" "$TAILSCALE_UNIT_DIR" "$TAILSCALE_RELEASE_ROOT" "$HOME/.local/state/herdr-mobile-relay/recovery"; do
+        current="$directory"
+        while [ "$current" != / ]; do
+            if [ -L "$current" ] || { [ -e "$current" ] && [ ! -d "$current" ]; }; then
+                echo 'Refusing a symlinked or non-directory Tailscale setup path.' >&2
+                return 1
+            fi
+            current="$(dirname "$current")"
+        done
+    done
 }
 
 tailscale_render_unit() {
