@@ -73,6 +73,16 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 			}
 		}
 		return nil
+	case "release-record":
+		if len(args) != 3 {
+			break
+		}
+		previous, candidate, err := ReadTailscaleReleaseRecovery(args[1], args[2])
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(output, "%s\t%s\n", previous, candidate)
+		return err
 	case "native-record":
 		if len(args) != 4 {
 			break
@@ -159,7 +169,7 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 		}
 		return nil
 	}
-	return errors.New("usage: tailscale-preflight environment FILE [KEY] | managed-environment FILE STATE RELEASE_ROOT | native-record FILE UNIT ENV | runbook UNIT LAUNCHER | session EXECUTABLE SOCKET | ports TCP UDP | listener PID PORT [EXECUTABLE] | gateway-disabled")
+	return errors.New("usage: tailscale-preflight environment FILE [KEY] | managed-environment FILE STATE RELEASE_ROOT | native-record FILE UNIT ENV | release-record DIRECTORY RELEASE_ROOT | runbook UNIT LAUNCHER | session EXECUTABLE SOCKET | ports TCP UDP | listener PID PORT [EXECUTABLE] | gateway-disabled")
 }
 
 // Verify the unit's actual process owns the loopback listening socket. Merely

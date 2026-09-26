@@ -19,6 +19,7 @@ EXPECTED_REVISION=${HERDR_UPDATE_EXPECTED_REVISION:-}
 tailscale_setup_context
 tailscale_acquire_setup_lock "$TAILSCALE_CONFIG_DIR"
 tailscale_no_pending_update
+[ -f "$TAILSCALE_STATE" ] || { echo 'Unmanaged private installation: stage a verified fork bundle and use its explicit --adopt-runbook --release-directory handoff (docs/tailscale-linux.md). No activation performed.' >&2; exit 1; }
 for pending in "$TAILSCALE_CONFIG_DIR"/app-origin-recovery.*; do
     [ ! -e "$pending" ] && [ ! -L "$pending" ] || { echo 'Review the interrupted app-origin change before updating.' >&2; exit 1; }
 done

@@ -170,7 +170,10 @@ native_install_exit() {
             fi
         fi
     fi
-    if [ "$restore_allowed" = true ]; then native_install_restore_files || failed=true; fi
+    if [ "$restore_allowed" = true ] && ! native_install_restore_files; then restore_allowed=false; failed=true; fi
+    if [ "$restore_allowed" = true ] && declare -F native_install_restore_release >/dev/null; then
+        if ! native_install_restore_release; then restore_allowed=false; failed=true; fi
+    fi
     if [ "$restore_allowed" = true ] && [ "$native_changed" = true ]; then
         native_install_restore_activation || failed=true
         if [ "$native_active" = true ] || [ "$native_legacy_active" = true ]; then
