@@ -5,6 +5,34 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Preparing the first private-capable fork candidate, `0.21.4`. This entry does not
+announce a published or production-accepted release.
+
+### Added
+
+- Tailscale-first setup for new supported Linux installations, with explicit
+  runbook adoption, scoped route ownership, private pairing and guarded recovery.
+- A persistent private app origin shared by independently authenticated relays,
+  and verified private release staging, update cutover and rollback.
+
+### Changed
+
+- Release discovery and downloads use this fork. Existing explicit legacy
+  transports and macOS behavior remain available; upstream attribution and
+  licensing are retained.
+- Private relay startup and ordinary restart do not arm pairing invitations.
+  Existing phone credentials are preserved through supported lifecycle changes.
+
+### Fixed
+
+- Bound agent-version probes, including inherited pipes and wrapper descendants.
+- Refuse consent-time identity replacement and standalone release activation
+  racing with private setup; fail packaging verification on intermediate errors.
+
+See [private Linux setup](docs/tailscale-linux.md) and the
+[acceptance evidence boundaries](docs/tailscale-acceptance.md). Real-device and
+live migration acceptance are separate from passing repository tests.
+
 ## [0.22.6] - 2026-10-02
 
 Version 0.22.5 was withdrawn; this release skips its version and asset generation.
