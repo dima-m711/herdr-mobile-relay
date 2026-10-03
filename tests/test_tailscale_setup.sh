@@ -15,13 +15,16 @@ case "$*" in
  '--user show-environment'|'--user daemon-reload') exit 0 ;;
  *'is-active --quiet '*) [[ "${*: -1}" == herdr-mobile-relay-tailscale.service && -f "$CASE/active" ]] && exit 0; exit 3 ;;
  *'is-enabled --quiet '*) [[ "${*: -1}" == herdr-mobile-relay-tailscale.service && -f "$CASE/enabled" ]] && exit 0; exit 1 ;;
- '--user show herdr-mobile-relay-tailscale.service --property MainPID --value') echo 12345 ;;
+ '--user show herdr-mobile-relay-tailscale.service --property MainPID --value')
+  if [[ "$FAILURE" == old-pid-drift && -f "$CASE/pid-observed" ]]; then echo 54321; else echo 12345; fi
+  touch "$CASE/pid-observed" ;;
  '--user show herdr-mobile-relay-tailscale.service --property FragmentPath --value') echo "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ;;
  '--user show herdr-mobile-relay-tailscale.service --property DropInPaths --value') [[ "$FAILURE" != dropin ]] || echo '/foreign-override.conf' ;;
  '--user enable herdr-mobile-relay-tailscale.service') touch "$CASE/enabled" ;;
  '--user restart herdr-mobile-relay-tailscale.service')
   if [[ "$FAILURE" == kill-app-restart ]]; then kill -KILL "$PPID"; exit 137; fi
-  [[ "$FAILURE" != service ]] || exit 1; touch "$CASE/active" ;;
+  [[ "$FAILURE" != service ]] || exit 1; touch "$CASE/active"
+  if grep -q 'start-tailscale-relay.sh' "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service"; then touch "$CASE/restored-old"; fi ;;
  '--user stop herdr-mobile-relay-tailscale.service') [[ -f "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ]] || exit 5; rm -f "$CASE/active" ;;
  '--user disable herdr-mobile-relay-tailscale.service') rm -f "$CASE/enabled" ;;
  '--user disable --now herdr-mobile-relay-tailscale.service') [[ "$FAILURE" != disable ]] || exit 1; rm -f "$CASE/active" "$CASE/enabled" ;;
@@ -63,8 +66,27 @@ esac
 [[ -f "$CASE/active" ]] || exit 7
 instance="$($TS_HELPER tailscale-preflight environment "$ENV_FILE" HERDR_RELAY_INSTANCE_ID)" || exit 1
 case "$*" in
- *https://*) [[ -f "$CASE/route" ]] || exit 7; case "$FAILURE" in https|rollback) instance=foreign ;; drift) printf 'foreign unit\n' > "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service"; instance=foreign ;; esac ;;
+ *https://*) [[ -f "$CASE/route" ]] || exit 7; case "$FAILURE" in https|rollback|rollback-identity) instance=foreign ;; drift) printf 'foreign unit\n' > "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service"; instance=foreign ;; esac ;;
 esac
+# Actual upstream 0.21.3 exposes identity in /healthz, not /readyz.
+if [[ -f "$CASE/force-upstream-readiness" ]] || [[ -f "$CASE/upstream-readiness" && "$(realpath "$HOME/.local/share/herdr-mobile-relay/current")" == "$HOME/.local/share/herdr-mobile-relay/releases/upstream" ]]; then
+ case "$*" in
+  *'/readyz'*)
+   if [[ "$FAILURE" == old-snapshot-failure && -f "$CASE/ready-observed" ]]; then echo '{"status":"unavailable","inventory":{"state":"error"}}'; exit 0; fi
+   touch "$CASE/ready-observed"
+   case "$FAILURE" in
+    old-not-ready) echo '{"status":"not_ready","inventory":{"state":"error"}}' ;;
+    old-partial-identity) echo '{"status":"ready","inventory":{"state":"ready"},"protocol":99}' ;;
+    *) echo '{"status":"ready","inventory":{"state":"ready"}}' ;;
+   esac
+   exit 0 ;;
+ esac
+ [[ "$FAILURE" != old-wrong-instance ]] || instance=foreign
+ revision=fixture
+ if [[ "$FAILURE" == rollback-identity && -f "$CASE/restored-old" ]]; then revision=foreign; fi
+ printf '{"status":"ok","readiness":"ready","inventory":{"state":"ready"},"instance":"%s","release_version":"fixture","revision":"%s","bundle_hash":"fixture","protocol":3,"gateway":{"enabled":false,"registered":false}}\n' "$instance" "$revision"
+ exit 0
+fi
 printf '{"status":"ready","inventory":{"state":"ready"},"instance":"%s","release_version":"fixture","revision":"fixture","bundle_hash":"fixture","protocol":3,"gateway":{"enabled":false,"registered":false}}\n' "$instance"
 STUB
 for command in sleep systemd-analyze herdr; do printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/$command"; done
@@ -88,7 +110,8 @@ new_case() {
  UNIT="$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service"
  mkdir -p "$HOME/.local/share/herdr-mobile-relay/current/relay" "$HOME/.local/share/herdr-mobile-relay/current/web"
  cp "$REPO_DIR/relay/tailscale-service.sh" "$HOME/.local/share/herdr-mobile-relay/current/relay/"
- printf '{"bundle_hash":"fixture"}\n' > "$HOME/.local/share/herdr-mobile-relay/current/web/release.json"
+ printf '{"schema":1,"version":"fixture","build":"fixture"}\n' > "$HOME/.local/share/herdr-mobile-relay/current/web/release.json"
+ printf '{"web_hash":"fixture"}\n' > "$HOME/.local/share/herdr-mobile-relay/current/release-manifest.json"
  cat > "$HOME/.local/share/herdr-mobile-relay/current/herdr-mobile-relay" <<'STUB'
 #!/bin/bash
 if [[ "$1" == tailscale-state && ( "$2" == prepare || "$2" == advance ) ]]; then

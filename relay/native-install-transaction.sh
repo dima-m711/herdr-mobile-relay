@@ -75,8 +75,12 @@ native_install_begin() {
         local previous binary instance
         binary="$(relay_binary)" || return 1
         instance="$(env_file_value "$native_environment" HERDR_RELAY_INSTANCE_ID)"
-        if previous="$(curl -fsS --max-time 2 "http://127.0.0.1:$native_previous_port/readyz" 2>/dev/null)" &&
-           printf '%s\n' "$previous" | "$binary" verify-readiness "$instance" "" "" "" 2>/dev/null; then
+        if declare -F native_install_readiness_snapshot >/dev/null; then
+            previous="$(native_install_readiness_snapshot "$native_previous_port" "$instance")" || previous=''
+        else
+            previous="$(curl -fsS --max-time 2 "http://127.0.0.1:$native_previous_port/readyz" 2>/dev/null)" || previous=''
+        fi
+        if printf '%s\n' "$previous" | "$binary" verify-readiness "$instance" "" "" "" 2>/dev/null; then
             printf '%s\n' "$previous" > "$native_recovery/previous-ready.json"
             chmod 600 "$native_recovery/previous-ready.json"
             native_previous_ready=true
@@ -180,9 +184,13 @@ native_install_exit() {
             if [ "$native_previous_ready" = true ]; then
                 local previous
                 previous="$(cat "$native_recovery/previous-ready.json")"
-                wait_for_relay_release_health "$native_previous_port" 15 1 \
-                    "$(json_string_field "$previous" release_version)" "$(json_string_field "$previous" revision)" \
-                    "$(json_string_field "$previous" bundle_hash)" "$(json_string_field "$previous" instance)" >/dev/null || failed=true
+                if declare -F native_install_verify_previous_readiness >/dev/null; then
+                    native_install_verify_previous_readiness "$previous" || failed=true
+                else
+                    wait_for_relay_release_health "$native_previous_port" 15 1 \
+                        "$(json_string_field "$previous" release_version)" "$(json_string_field "$previous" revision)" \
+                        "$(json_string_field "$previous" bundle_hash)" "$(json_string_field "$previous" instance)" >/dev/null || failed=true
+                fi
             else
                 echo "Previous runtime readiness was unavailable; restored service identity cannot be confirmed." >&2
                 failed=true
