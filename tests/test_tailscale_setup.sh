@@ -89,7 +89,18 @@ if [[ -f "$CASE/force-upstream-readiness" ]] || [[ -f "$CASE/upstream-readiness"
 fi
 printf '{"status":"ready","inventory":{"state":"ready"},"instance":"%s","release_version":"fixture","revision":"fixture","bundle_hash":"fixture","protocol":3,"gateway":{"enabled":false,"registered":false}}\n' "$instance"
 STUB
-for command in sleep systemd-analyze herdr; do printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/$command"; done
+cat > "$WORK/bin/systemd-analyze" <<'STUB'
+#!/bin/bash
+printf 'systemd-analyze %s\n' "$*" >> "$CASE/calls"
+unit="${*: -1}"
+launcher="$(grep '^ExecStart=' "$unit")" || exit 1
+launcher="${launcher#ExecStart=}"
+launcher="${launcher#\"}"; launcher="${launcher%\"}"
+[[ -x "$launcher" ]] || { echo 'unit launcher is not executable' >&2; exit 1; }
+[[ "$FAILURE" != unit-verify ]] || exit 1
+if [[ "$FAILURE" == unit-verify-final && "$(basename "$unit")" == new.service ]]; then exit 1; fi
+STUB
+for command in sleep herdr; do printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/$command"; done
 cat > "$WORK/bin/sudo" <<'STUB'
 #!/bin/bash
 printf 'sudo %s\n' "$*" >> "$CASE/calls"
