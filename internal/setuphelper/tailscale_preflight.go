@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/0cv/herdr-mobile-relay/internal/herdr"
+	"github.com/0cv/herdr-mobile-relay/internal/readiness"
 )
 
 // RunTailscalePreflight performs bounded, non-mutating checks. It never prints
@@ -108,6 +109,11 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 		}
 		_, err = fmt.Fprintf(output, "%s\t%s\n", fields["active"], fields["enabled"])
 		return err
+	case "runbook-readiness":
+		if len(args) != 5 {
+			break
+		}
+		return runbookReadiness(input, output, readiness.Expected{Instance: args[1], Version: args[2], Revision: args[3], WebHash: args[4]})
 	case "runbook":
 		if len(args) != 3 {
 			break
@@ -169,7 +175,7 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 		}
 		return nil
 	}
-	return errors.New("usage: tailscale-preflight environment FILE [KEY] | managed-environment FILE STATE RELEASE_ROOT | native-record FILE UNIT ENV | release-record DIRECTORY RELEASE_ROOT | runbook UNIT LAUNCHER | session EXECUTABLE SOCKET | ports TCP UDP | listener PID PORT [EXECUTABLE] | gateway-disabled")
+	return errors.New("usage: tailscale-preflight environment FILE [KEY] | managed-environment FILE STATE RELEASE_ROOT | native-record FILE UNIT ENV | release-record DIRECTORY RELEASE_ROOT | runbook UNIT LAUNCHER | runbook-readiness INSTANCE VERSION REVISION WEB_HASH | session EXECUTABLE SOCKET | ports TCP UDP | listener PID PORT [EXECUTABLE] | gateway-disabled")
 }
 
 // Verify the unit's actual process owns the loopback listening socket. Merely

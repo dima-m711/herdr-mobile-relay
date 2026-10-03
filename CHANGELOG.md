@@ -5,8 +5,9 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Preparing the first private-capable fork candidate, `0.21.4`. This entry does not
-announce a published or production-accepted release.
+Preparing private-capable fork candidate `0.21.5`, superseding the local-only
+`0.21.4` trial candidate. This entry does not announce a published or
+production-accepted release.
 
 ### Added
 
@@ -25,6 +26,11 @@ announce a published or production-accepted release.
 
 ### Fixed
 
+- Verify original runbook readiness using the upstream split between `/readyz`
+  and `/healthz`, retaining strict identity and process checks through adoption
+  and rollback; refuse adoption without a verified recovery receipt.
+- Read the packaged web hash from the release manifest rather than frontend
+  asset metadata, so readiness checks match real release bundles.
 - Bound agent-version probes, including inherited pipes and wrapper descendants.
 - Refuse consent-time identity replacement and standalone release activation
   racing with private setup; fail packaging verification on intermediate errors.

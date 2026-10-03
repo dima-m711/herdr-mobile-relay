@@ -215,6 +215,10 @@ if [ -n "$BOOTSTRAP_RELEASE" ]; then
 fi
 native_keep_recovery=true
 native_install_begin systemd "$TAILSCALE_UNIT" '' "$TAILSCALE_ENV" "$TAILSCALE_LABEL" ''
+if [ "$ADOPT" = true ] && [ "$native_previous_ready" != true ]; then
+    echo 'Cannot retain verified previous readiness for runbook rollback; no adoption performed.' >&2
+    exit 1
+fi
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
     printf '%s\n' "$BOOTSTRAP_PREVIOUS" > "$native_recovery/previous-release"
     printf '%s\n' "$BOOTSTRAP_RELEASE" > "$native_recovery/candidate-release"

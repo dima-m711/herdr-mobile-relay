@@ -88,12 +88,47 @@ tailscale_local_ready() {
     printf '%s' "$healthz" | "$TAILSCALE_BINARY" tailscale-preflight gateway-disabled
 }
 
-tailscale_existing_ready() {
-    local health pid
-    health="$(curl -fsS --max-time 5 "http://127.0.0.1:$TAILSCALE_PORT/readyz")" || return 1
-    printf '%s' "$health" | "$TAILSCALE_BINARY" verify-readiness "$TAILSCALE_INSTANCE" '' '' '' || return 1
+# Used for the pre-consent observation, the native snapshot, and verification
+# after restoring the old pointer/unit. Never use legacy evidence for a managed
+# unit or accept identity-bearing readiness that failed strict verification.
+native_install_readiness_snapshot() {
+    local port="$1" instance="$2" version="${3:-}" revision="${4:-}" web_hash="${5:-}"
+    local pid executable ready health receipt
+    executable="$(realpath -e "$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay")" || return 1
     pid="$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)" || return 1
-    "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$TAILSCALE_PORT" || return 1
+    "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$port" "$executable" || return 1
+    ready="$(curl -fsS --noproxy '*' --max-time 2 --max-filesize 65536 "http://127.0.0.1:$port/readyz")" || return 1
+    if printf '%s' "$ready" | "$TAILSCALE_BINARY" verify-readiness "$instance" "$version" "$revision" "$web_hash" 2>/dev/null; then
+        receipt="$ready"
+    else
+        "$TAILSCALE_BINARY" tailscale-preflight runbook "$TAILSCALE_UNIT" "$TAILSCALE_CONFIG_DIR/start-tailscale-relay.sh" || return 1
+        health="$(curl -fsS --noproxy '*' --max-time 2 --max-filesize 65536 "http://127.0.0.1:$port/healthz")" || return 1
+        receipt="$(printf '{"ready":%s,"health":%s}' "$ready" "$health" |
+            "$TAILSCALE_BINARY" tailscale-preflight runbook-readiness "$instance" "$version" "$revision" "$web_hash")" || return 1
+    fi
+    [ "$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)" = "$pid" ] &&
+        [ "$(realpath -e "$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay")" = "$executable" ] || return 1
+    "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$port" "$executable" || return 1
+    printf '%s\n' "$receipt"
+}
+
+native_install_verify_previous_readiness() {
+    local previous="$1" attempt instance version revision web_hash
+    instance="$(json_string_field "$previous" instance)"
+    version="$(json_string_field "$previous" release_version)"
+    revision="$(json_string_field "$previous" revision)"
+    web_hash="$(json_string_field "$previous" bundle_hash)"
+    [ -n "$instance" ] && [ -n "$version" ] && [ -n "$revision" ] && [ -n "$web_hash" ] || return 1
+    for attempt in {1..15}; do
+        if native_install_readiness_snapshot "$native_previous_port" "$instance" "$version" "$revision" "$web_hash" >/dev/null 2>&1; then return 0; fi
+        [ "$attempt" -eq 15 ] || sleep 1
+    done
+    return 1
+}
+
+tailscale_existing_ready() {
+    local health
+    native_install_readiness_snapshot "$TAILSCALE_PORT" "$TAILSCALE_INSTANCE" >/dev/null || return 1
     health="$(curl -fsS --max-time 5 "http://127.0.0.1:$TAILSCALE_PORT/healthz")" || return 1
     printf '%s' "$health" | "$TAILSCALE_BINARY" tailscale-preflight gateway-disabled
 }
