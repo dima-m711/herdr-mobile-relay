@@ -62,6 +62,8 @@ done
 new_bootstrap success
 bootstrap y --adopt-runbook
 [[ "$(phase)" == verified && "$(realpath "$ROOT/current")" == "$CANDIDATE" ]]
+grep -q 'systemd-analyze.*new-validation.service' "$CASE/calls"
+grep -q 'systemd-analyze.*new.service' "$CASE/calls"
 [[ "$($TS_HELPER tailscale-preflight environment "$ENV_FILE" HERDR_RELAY_TOKEN)" == "$($TS_HELPER tailscale-preflight environment "$CASE/before.env" HERDR_RELAY_TOKEN)" ]]
 ! grep -q 'tailscale serve --' "$CASE/calls"
 # Even coherent legacy evidence cannot downgrade a managed unit's readiness.
@@ -81,7 +83,7 @@ grep -q 'Cannot retain verified previous readiness' "$CASE/output"
 cmp "$ENV_FILE" "$CASE/before.env"
 cmp "$UNIT" "$CASE/before.unit"
 ! grep -q 'systemctl --user stop\|systemctl --user restart' "$CASE/calls"
-for failure in candidate https; do
+for failure in candidate https unit-verify unit-verify-final; do
  new_bootstrap "$failure"
  export FAILURE="$failure"
  if bootstrap y --adopt-runbook; then echo "bootstrap ignored $failure" >&2; exit 1; fi
@@ -89,7 +91,7 @@ for failure in candidate https; do
  cmp "$ENV_FILE" "$CASE/before.env"
  cmp "$UNIT" "$CASE/before.unit"
  ! grep -q 'tailscale serve --' "$CASE/calls"
- if [[ "$failure" == https ]]; then
+ if [[ "$failure" != candidate ]]; then
   [[ "$(phase)" == rolled-back ]]
   ! grep -q 'rollback is incomplete\|Previous runtime readiness was unavailable' "$CASE/output"
  fi

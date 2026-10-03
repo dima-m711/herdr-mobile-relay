@@ -257,7 +257,15 @@ else
 fi
 tailscale_render_unit > "$native_recovery/new.service"
 chmod 600 "$native_recovery/new.service"
-systemd-analyze --user verify "$native_recovery/new.service"
+if [ -n "$BOOTSTRAP_RELEASE" ]; then
+    # The old current bundle has no private launcher. Validate against the
+    # staged physical release first, without changing the final unit template.
+    tailscale_render_unit "$BOOTSTRAP_RELEASE" > "$native_recovery/new-validation.service"
+    chmod 600 "$native_recovery/new-validation.service"
+    systemd-analyze --user verify "$native_recovery/new-validation.service"
+else
+    systemd-analyze --user verify "$native_recovery/new.service"
+fi
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
     [ -L "$TAILSCALE_RELEASE_ROOT/current" ] && [ "$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")" = "$BOOTSTRAP_PREVIOUS" ] &&
         cmp -s "$TAILSCALE_ENV" "$native_recovery/2" && cmp -s "$TAILSCALE_UNIT" "$native_recovery/0" || { echo 'Bootstrap identity changed before cutover; preserving it.' >&2; exit 1; }
@@ -266,6 +274,9 @@ native_changed=true
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
     systemctl --user stop "$TAILSCALE_LABEL"
     "$TAILSCALE_BINARY" activate-release "$TAILSCALE_RELEASE_ROOT" "$BOOTSTRAP_RELEASE"
+    # Now the final current-based launcher exists; verify the exact unit before
+    # publishing it. Failure still follows the guarded old-release rollback.
+    systemd-analyze --user verify "$native_recovery/new.service"
 fi
 native_stage="$(mktemp "$TAILSCALE_CONFIG_DIR/.relay-env.XXXXXX")"
 cp "$STAGED_ENV" "$native_stage"; chmod 600 "$native_stage"; mv -f "$native_stage" "$TAILSCALE_ENV"

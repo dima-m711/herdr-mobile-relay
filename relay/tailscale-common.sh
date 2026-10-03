@@ -79,10 +79,10 @@ tailscale_validate_directories() {
 }
 
 tailscale_render_unit() {
-    local work environment launcher
-    work="$(systemd_quoted "$TAILSCALE_RELEASE_ROOT/current")" || return 1
+    local work environment launcher release="${1:-$TAILSCALE_RELEASE_ROOT/current}"
+    work="$(systemd_quoted "$release")" || return 1
     environment="$(systemd_quoted "HERDR_RELAY_ENV=$TAILSCALE_ENV")" || return 1
-    launcher="$(systemd_quoted "$TAILSCALE_RELEASE_ROOT/current/relay/tailscale-service.sh" exec)" || return 1
+    launcher="$(systemd_quoted "$release/relay/tailscale-service.sh" exec)" || return 1
     printf '%s\n' '# herdr-mobile-relay-tailscale-v1' '[Unit]' \
         'Description=Herdr Mobile Relay (private Tailscale access)' '' '[Service]' \
         'Type=simple' "WorkingDirectory=$work" "Environment=$environment" \

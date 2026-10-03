@@ -29,6 +29,8 @@ production-accepted release.
 - Verify original runbook readiness using the upstream split between `/readyz`
   and `/healthz`, retaining strict identity and process checks through adoption
   and rollback; refuse adoption without a verified recovery receipt.
+- Validate initial adoption against the staged launcher before activation, then
+  verify the exact final unit after switching the pointer and before publication.
 - Read the packaged web hash from the release manifest rather than frontend
   asset metadata, so readiness checks match real release bundles.
 - Bound agent-version probes, including inherited pipes and wrapper descendants.
