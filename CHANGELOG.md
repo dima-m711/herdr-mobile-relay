@@ -5,9 +5,9 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-Preparing private-capable fork candidate `0.21.5`, superseding the local-only
-`0.21.4` trial candidate. This entry does not announce a published or
-production-accepted release.
+Private Tailscale changes rebased onto upstream `0.22.6`. The earlier `0.21.4`
+and `0.21.5` fork builds were local trial candidates. This entry does not
+announce a published or production-accepted fork release.
 
 ### Added
 

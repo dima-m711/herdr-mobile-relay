@@ -76,7 +76,6 @@ for TARGET in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
     cp -R "$REPO_DIR/relay/pi-command-bridge" "$STAGE/relay/pi-command-bridge"
     for WRAPPER in \
         common.sh \
-        native-install-transaction.sh \
         tailscale-common.sh \
         tailscale-transaction.sh \
         tailscale-service.sh \
