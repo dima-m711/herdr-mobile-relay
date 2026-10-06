@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -25,11 +26,11 @@ func privateJobFixture(t *testing.T) Job {
 	env := filepath.Join(dir, "relay.env")
 	root := filepath.Join(dir, "releases")
 	instance := strings.Repeat("a", 32)
-	text := fmt.Sprintf("HERDR_CONNECTION_MODE=tailscale\nHERDR_RELAY_SERVICE_NAME=herdr-mobile-relay-tailscale.service\nHERDR_RELEASE_ROOT=%q\nHERDR_BIN=%q\nHERDR_RELAY_INSTANCE_ID=%s\n", root, herdr, instance)
+	text := fmt.Sprintf("HERDR_CONNECTION_MODE=tailscale\nHERDR_RELAY_SERVICE_NAME=%s\nHERDR_RELEASE_ROOT=%q\nHERDR_BIN=%q\nHERDR_RELAY_INSTANCE_ID=%s\n", setuphelper.TailscaleServiceName(runtime.GOOS), root, herdr, instance)
 	if err := os.WriteFile(env, []byte(text), 0600); err != nil {
 		t.Fatal(err)
 	}
-	state := setuphelper.TailscaleSetupState{Schema: 1, Owner: "herdr-mobile-relay-tailscale-v1", Phase: "verified", Hostname: "fixture.tailtest.ts.net", HTTPSPort: 8443, RelayPort: 8375, Environment: env, Unit: filepath.Join(dir, "herdr-mobile-relay-tailscale.service"), Socket: filepath.Join(dir, "herdr.sock"), Instance: instance, RecoveryDirectory: filepath.Join(dir, "recovery"), RouteOwnership: "adopted", UnrelatedDigest: strings.Repeat("a", 64)}
+	state := setuphelper.TailscaleSetupState{Schema: 1, Owner: "herdr-mobile-relay-tailscale-v1", Phase: "verified", Hostname: "fixture.tailtest.ts.net", HTTPSPort: 8443, RelayPort: 8375, Environment: env, Unit: filepath.Join(dir, setuphelper.TailscaleServiceFile(runtime.GOOS)), Socket: filepath.Join(dir, "herdr.sock"), Instance: instance, RecoveryDirectory: filepath.Join(dir, "recovery"), RouteOwnership: "adopted", UnrelatedDigest: strings.Repeat("a", 64)}
 	data, err := json.Marshal(state)
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +96,7 @@ func TestPrivatePluginInvocationPinsContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := strings.Join([]string{job.Environment, filepath.Dir(job.Environment), job.ReleaseRoot, "tailscale", "herdr-mobile-relay-tailscale.service", "dima-m711/herdr-mobile-relay", job.TargetRevision, ""}, "\n")
+	want := strings.Join([]string{job.Environment, filepath.Dir(job.Environment), job.ReleaseRoot, "tailscale", setuphelper.TailscaleServiceName(runtime.GOOS), "dima-m711/herdr-mobile-relay", job.TargetRevision, ""}, "\n")
 	if string(result) != want {
 		t.Fatal("private plugin context was not pinned")
 	}

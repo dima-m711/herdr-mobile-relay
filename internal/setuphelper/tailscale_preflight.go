@@ -56,7 +56,7 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 		}
 		for key, expected := range map[string]string{
 			"HERDR_CONNECTION_MODE": "tailscale", "HERDR_RELAY_HOST": "127.0.0.1", "HERDR_TRANSPORT_FORCE_RELAY": "1", "HERDR_REACHABILITY_PORT_MAPPING": "0", "HERDR_RELAY_REARM_BOOTSTRAP": "0", "HERDR_GATEWAY_URL": "",
-			"HERDR_RELAY_PORT": strconv.Itoa(state.RelayPort), "HERDR_SOCKET_PATH": state.Socket, "HERDR_RELAY_INSTANCE_ID": state.Instance, "HERDR_RELAY_SERVICE_NAME": filepath.Base(state.Unit), "HERDR_RELEASE_ROOT": args[3], "HERDR_WEB_ROOT": filepath.Join(args[3], "current", "web"),
+			"HERDR_RELAY_PORT": strconv.Itoa(state.RelayPort), "HERDR_SOCKET_PATH": state.Socket, "HERDR_RELAY_INSTANCE_ID": state.Instance, "HERDR_RELAY_SERVICE_NAME": strings.TrimSuffix(filepath.Base(state.Unit), ".plist"), "HERDR_RELEASE_ROOT": args[3], "HERDR_WEB_ROOT": filepath.Join(args[3], "current", "web"),
 		} {
 			if value, exists := values[key]; !exists || value != expected {
 				return errors.New("configuration no longer matches managed Tailscale policy and identity")
@@ -181,7 +181,7 @@ func RunTailscalePreflight(args []string, input io.Reader, output io.Writer) err
 // Verify the unit's actual process owns the loopback listening socket. Merely
 // finding the port in /proc/PID/net/tcp is insufficient: it lists the whole
 // network namespace, so correlate its inode with the selected process's FDs.
-func verifyTailscaleListener(rawPID, rawPort, executable string) error {
+func verifyLinuxTailscaleListener(rawPID, rawPort, executable string) error {
 	pid, err := strconv.Atoi(rawPID)
 	if runtime.GOOS != "linux" || err != nil || pid <= 0 || strconv.Itoa(pid) != rawPID {
 		return errors.New("invalid Linux relay process identity")

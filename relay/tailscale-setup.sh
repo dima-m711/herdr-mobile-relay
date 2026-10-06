@@ -34,19 +34,22 @@ done
 [ -t 0 ] && [ -t 1 ] || { echo 'Tailscale setup requires your private interactive terminal; nothing changed.' >&2; exit 1; }
 unset GH_TOKEN GITHUB_TOKEN HERDR_GITHUB_TOKEN_FILE HERDR_RELAY_TOKEN HERDR_SESSION HERDR_CLIENT_SOCKET_PATH
 tailscale_setup_context
+if [ "$TAILSCALE_MANAGER" = launchd ] && { [ "$ADOPT" = true ] || [ -n "$BOOTSTRAP_RELEASE" ]; }; then
+    echo 'Runbook adoption is Linux-only. macOS accepts a new managed private installation, not an unrecognized existing service.' >&2; exit 1
+fi
 export HERDR_RELAY_ENV="$TAILSCALE_ENV" HERDR_RELEASE_ROOT="$TAILSCALE_RELEASE_ROOT"
 export HERDR_WEB_ROOT="$TAILSCALE_RELEASE_ROOT/current/web"
 TAILSCALE_BINARY="$(relay_binary)"
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
     [ "$ADOPT" = true ] || [ "$RECOVER" = true ] || { echo 'A staged release is only for explicit initial runbook adoption/recovery.' >&2; exit 2; }
-    [ "$(realpath -e "$BOOTSTRAP_RELEASE")" = "$BOOTSTRAP_RELEASE" ] &&
+    [ "$(tailscale_realpath "$BOOTSTRAP_RELEASE")" = "$BOOTSTRAP_RELEASE" ] &&
         [ "$(dirname "$BOOTSTRAP_RELEASE")" = "$TAILSCALE_RELEASE_ROOT/releases" ] &&
         [ "$SCRIPT_DIR" = "$BOOTSTRAP_RELEASE/relay" ] || { echo 'Run the verified staged bundle setup script from the managed releases directory.' >&2; exit 1; }
     TAILSCALE_BINARY="$BOOTSTRAP_RELEASE/herdr-mobile-relay"
     "$TAILSCALE_BINARY" verify-release --connection-mode tailscale "$BOOTSTRAP_RELEASE" >/dev/null
     export HERDR_RELAY_BIN="$TAILSCALE_BINARY"
     [ -L "$TAILSCALE_RELEASE_ROOT/current" ] || { echo 'Initial adoption requires the existing release symlink.' >&2; exit 1; }
-    BOOTSTRAP_PREVIOUS="$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")"
+    BOOTSTRAP_PREVIOUS="$(tailscale_realpath "$TAILSCALE_RELEASE_ROOT/current")"
     [ "$(dirname "$BOOTSTRAP_PREVIOUS")" = "$TAILSCALE_RELEASE_ROOT/releases" ] || exit 1
     "$BOOTSTRAP_PREVIOUS/herdr-mobile-relay" verify-release "$BOOTSTRAP_PREVIOUS" >/dev/null
 fi
@@ -91,7 +94,7 @@ if [ -e "$TAILSCALE_STATE" ] || [ -L "$TAILSCALE_STATE" ]; then
             SOURCE_ENV="$OLD_RECOVERY/new.env" ;;
         removed)
             [ -f "$TAILSCALE_ENV" ] && [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] &&
-                [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(native_systemd_state is-enabled "$TAILSCALE_LABEL")" = false ] || {
+                [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(tailscale_service_state is-enabled "$TAILSCALE_LABEL")" = false ] || {
                 echo 'A completed teardown must retain its environment and have no remaining service before setup can resume.' >&2; exit 1;
             }
             "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT" ;;
@@ -137,7 +140,7 @@ tailscale_read_serve
 BEFORE_STATE="$TAILSCALE_ROUTE_STATE" BEFORE_DIGEST="$TAILSCALE_DIGEST"
 UNIT_EXISTED=false
 SOURCE_DIGEST=''
-[ -z "$SOURCE_ENV" ] || SOURCE_DIGEST="$(sha256sum "$SOURCE_ENV")"
+[ -z "$SOURCE_ENV" ] || SOURCE_DIGEST="$(tailscale_hash "$SOURCE_ENV")"
 if [ -e "$TAILSCALE_UNIT" ] || [ -L "$TAILSCALE_UNIT" ]; then
     UNIT_EXISTED=true
     [ "$ADOPT" = true ] || { echo 'Existing Tailscale unit requires --adopt-runbook and explicit review.' >&2; exit 1; }
@@ -147,7 +150,7 @@ if [ -e "$TAILSCALE_UNIT" ] || [ -L "$TAILSCALE_UNIT" ]; then
     tailscale_existing_ready
 else
     [ "$BEFORE_STATE" = absent ] || [ "$PHASE" = rolled-back ] || [ "$PHASE" = removed ] || { echo 'An existing route has no recognized relay identity; review it manually before adoption.' >&2; exit 1; }
-    [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] || { echo 'An active Tailscale service has no recognized definition.' >&2; exit 1; }
+    [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = false ] || { echo 'An active Tailscale service has no recognized definition.' >&2; exit 1; }
     "$TAILSCALE_BINARY" tailscale-preflight ports "$TAILSCALE_PORT" "$TAILSCALE_PLUGIN_PORT"
 fi
 [ -z "$BOOTSTRAP_RELEASE" ] || [ "$UNIT_EXISTED" = true ] || { echo 'Staged bootstrap requires the recognized existing runbook unit.' >&2; exit 1; }
@@ -173,7 +176,11 @@ if [ "$UNIT_EXISTED" = true ]; then
     echo 'The original unit/environment (including permissions) will be retained in a private recovery directory.'
 fi
 echo 'HTTPS certificates disclose the machine and tailnet DNS names in public certificate-transparency logs.'
-echo 'The service starts at login. Unattended boot also requires separately approved linger and a running Herdr session.'
+if [ "$TAILSCALE_MANAGER" = launchd ]; then
+    echo 'The LaunchAgent starts at GUI login. Keep Herdr and Tailscale running; sleeping or logged-out Macs may be unreachable.'
+else
+    echo 'The service starts at login. Unattended boot also requires separately approved linger and a running Herdr session.'
+fi
 if [ "$BEFORE_STATE" = matching ]; then echo 'The matching existing route will be adopted, never removed by automatic rollback.'
 else echo "Configure: tailscale serve --bg --https=$TAILSCALE_HTTPS $TAILSCALE_TARGET"; echo "If this attempt fails, remove only its still-matching created route: tailscale serve --https=$TAILSCALE_HTTPS off"; fi
 [ "$TAILSCALE_SUDO" = false ] || echo 'The listed scoped Serve commands will use sudo in this terminal; no operator, ACL, Funnel or linger changes.'
@@ -202,7 +209,7 @@ tailscale_read_serve
 [ "$TAILSCALE_ROUTE_STATE" = "$BEFORE_STATE" ] && [ "$TAILSCALE_DIGEST" = "$BEFORE_DIGEST" ] || { echo 'Serve changed during approval; aborting without replacement.' >&2; exit 1; }
 if [ -n "$SOURCE_ENV" ]; then
     "$TAILSCALE_BINARY" tailscale-preflight environment "$SOURCE_ENV"
-    [ "$(sha256sum "$SOURCE_ENV")" = "$SOURCE_DIGEST" ] || { echo 'Configuration changed during approval; aborting.' >&2; exit 1; }
+    [ "$(tailscale_hash "$SOURCE_ENV")" = "$SOURCE_DIGEST" ] || { echo 'Configuration changed during approval; aborting.' >&2; exit 1; }
 fi
 if [ "$UNIT_EXISTED" = true ]; then
     "$TAILSCALE_BINARY" tailscale-preflight runbook "$TAILSCALE_UNIT" "$TAILSCALE_CONFIG_DIR/start-tailscale-relay.sh"
@@ -210,11 +217,11 @@ else
     [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] || { echo 'A unit appeared during approval; aborting.' >&2; exit 1; }
 fi
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
-    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] && [ "$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")" = "$BOOTSTRAP_PREVIOUS" ] || { echo 'Release changed during approval.' >&2; exit 1; }
+    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] && [ "$(tailscale_realpath "$TAILSCALE_RELEASE_ROOT/current")" = "$BOOTSTRAP_PREVIOUS" ] || { echo 'Release changed during approval.' >&2; exit 1; }
     "$TAILSCALE_BINARY" verify-release --connection-mode tailscale "$BOOTSTRAP_RELEASE" >/dev/null
 fi
 native_keep_recovery=true
-native_install_begin systemd "$TAILSCALE_UNIT" '' "$TAILSCALE_ENV" "$TAILSCALE_LABEL" ''
+native_install_begin "$TAILSCALE_MANAGER" "$TAILSCALE_UNIT" '' "$TAILSCALE_ENV" "$TAILSCALE_LABEL" ''
 if [ "$ADOPT" = true ] && [ "$native_previous_ready" != true ]; then
     echo 'Cannot retain verified previous readiness for runbook rollback; no adoption performed.' >&2
     exit 1
@@ -222,7 +229,7 @@ fi
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
     printf '%s\n' "$BOOTSTRAP_PREVIOUS" > "$native_recovery/previous-release"
     printf '%s\n' "$BOOTSTRAP_RELEASE" > "$native_recovery/candidate-release"
-    sync -f "$native_recovery"
+    tailscale_sync "$native_recovery"
 fi
 STAGED_ENV="$native_recovery/new.env"
 if [ -n "$SOURCE_ENV" ]; then
@@ -262,31 +269,31 @@ if [ -n "$BOOTSTRAP_RELEASE" ]; then
     # staged physical release first, without changing the final unit template.
     tailscale_render_unit "$BOOTSTRAP_RELEASE" > "$native_recovery/new-validation.service"
     chmod 600 "$native_recovery/new-validation.service"
-    systemd-analyze --user verify "$native_recovery/new-validation.service"
+    tailscale_validate_unit "$native_recovery/new-validation.service"
 else
-    systemd-analyze --user verify "$native_recovery/new.service"
+    tailscale_validate_unit "$native_recovery/new.service"
 fi
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
-    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] && [ "$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")" = "$BOOTSTRAP_PREVIOUS" ] &&
+    [ -L "$TAILSCALE_RELEASE_ROOT/current" ] && [ "$(tailscale_realpath "$TAILSCALE_RELEASE_ROOT/current")" = "$BOOTSTRAP_PREVIOUS" ] &&
         cmp -s "$TAILSCALE_ENV" "$native_recovery/2" && cmp -s "$TAILSCALE_UNIT" "$native_recovery/0" || { echo 'Bootstrap identity changed before cutover; preserving it.' >&2; exit 1; }
 fi
 native_changed=true
 if [ -n "$BOOTSTRAP_RELEASE" ]; then
-    systemctl --user stop "$TAILSCALE_LABEL"
+    tailscale_service stop "$TAILSCALE_LABEL"
     "$TAILSCALE_BINARY" activate-release "$TAILSCALE_RELEASE_ROOT" "$BOOTSTRAP_RELEASE"
     # Now the final current-based launcher exists; verify the exact unit before
     # publishing it. Failure still follows the guarded old-release rollback.
-    systemd-analyze --user verify "$native_recovery/new.service"
+    tailscale_validate_unit "$native_recovery/new.service"
 fi
 native_stage="$(mktemp "$TAILSCALE_CONFIG_DIR/.relay-env.XXXXXX")"
 cp "$STAGED_ENV" "$native_stage"; chmod 600 "$native_stage"; mv -f "$native_stage" "$TAILSCALE_ENV"
 native_stage="$(mktemp "$TAILSCALE_UNIT_DIR/.herdr-tailscale.XXXXXX")"
 cp "$native_recovery/new.service" "$native_stage"; chmod 600 "$native_stage"; mv -f "$native_stage" "$TAILSCALE_UNIT"
-systemctl --user daemon-reload
+tailscale_service daemon-reload
 tailscale_check_loaded_unit
 "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT"
-systemctl --user enable "$TAILSCALE_LABEL"
-systemctl --user restart "$TAILSCALE_LABEL"
+tailscale_service enable "$TAILSCALE_LABEL"
+tailscale_service restart "$TAILSCALE_LABEL"
 tailscale_local_ready
 "$TAILSCALE_BINARY" tailscale-state advance "$TAILSCALE_STATE" prepared local-ready
 # Approvals do not authorize overwriting a concurrently changed endpoint.

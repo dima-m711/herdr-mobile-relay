@@ -73,10 +73,12 @@ for TARGET in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
     cp "$REPO_DIR/install.sh" "$STAGE/install.sh"
     mkdir -p "$STAGE/docs"
     cp "$REPO_DIR/docs/tailscale-linux.md" "$STAGE/docs/tailscale-linux.md"
+    cp "$REPO_DIR/docs/tailscale-macos.md" "$STAGE/docs/tailscale-macos.md"
     cp -R "$REPO_DIR/relay/pi-command-bridge" "$STAGE/relay/pi-command-bridge"
     for WRAPPER in \
         common.sh \
         tailscale-common.sh \
+        tailscale-darwin.sh \
         tailscale-transaction.sh \
         tailscale-service.sh \
         tailscale-control.sh \
@@ -103,9 +105,7 @@ for TARGET in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
         cp "$REPO_DIR/relay/$WRAPPER" "$STAGE/relay/$WRAPPER"
     done
     "$WORK_DIR/release-tool" release-manifest "$STAGE" "$VERSION" "$REVISION" "$TARGET" >/dev/null
-    if [ "$GOOS" = linux ]; then
-        grep -q '"tailscale_setup": 1,' "$STAGE/release-manifest.json" || { echo 'Linux bundle is missing the managed private setup contract' >&2; exit 1; }
-    fi
+    grep -q '"tailscale_setup": 1,' "$STAGE/release-manifest.json" || { echo 'Bundle is missing the managed private setup contract' >&2; exit 1; }
     # This host tool cannot execute cross-built binaries; native CI verifies each extracted executable.
     "$WORK_DIR/release-tool" verify-release --allow-cross-target --target "$TARGET" "$STAGE" >/dev/null
     tar -C "$STAGE" -czf "$OUTPUT_DIR/$ARCHIVE" .

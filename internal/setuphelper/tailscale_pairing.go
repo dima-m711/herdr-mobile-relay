@@ -114,7 +114,7 @@ func confirmPrivateBootstrap(path, key string, previous, requested time.Time) er
 
 func armPrivateInvitation(envPath, rawPID string, values map[string]string) error {
 	pid, err := strconv.Atoi(rawPID)
-	if err != nil || pid <= 1 || runtime.GOOS != "linux" {
+	if err != nil || pid <= 1 || (runtime.GOOS != "linux" && runtime.GOOS != "darwin") {
 		return errors.New("invalid private relay process")
 	}
 	process, err := os.FindProcess(pid)
@@ -169,8 +169,8 @@ func RunTailscalePairing(args []string, output io.Writer) error {
 	if len(args) != 7 || args[0] != "show" {
 		return errors.New("usage: tailscale-pairing app | origin URL | show ENV PID APP_ORIGIN RELAY_ORIGIN LABEL COLUMNS")
 	}
-	if output != os.Stdout || runtime.GOOS != "linux" {
-		return errors.New("private invitations require an attached Linux terminal")
+	if output != os.Stdout || (runtime.GOOS != "linux" && runtime.GOOS != "darwin") {
+		return errors.New("private invitations require an attached Linux or macOS terminal")
 	}
 	if _, err := unix.IoctlGetWinsize(int(os.Stdin.Fd()), unix.TIOCGWINSZ); err != nil {
 		return errors.New("private invitations require terminal input")

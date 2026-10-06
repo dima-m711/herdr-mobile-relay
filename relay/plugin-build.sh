@@ -237,6 +237,18 @@ claim_empty=false
 if [ ! -e "$TARGET_CONFIG_ROOT" ] || [ -z "$(find "$TARGET_CONFIG_ROOT" -mindepth 1 -maxdepth 1 -print -quit)" ]; then claim_empty=true; fi
 mkdir -p "$TARGET_CONFIG_ROOT"
 [ -O "$TARGET_CONFIG_ROOT" ] && [ ! -L "$TARGET_CONFIG_ROOT" ] || exit 1
+if [ "$PLATFORM" = Darwin ]; then
+    # Older Mac releases have no native FD-lock helper. Stage a verified bundle
+    # before taking the lease; never activate a candidate just to obtain tools.
+    lock_binary="$(relay_binary)"
+    if ! "$lock_binary" tailscale-platform hash /dev/null >/dev/null 2>&1; then
+        lock_release="$(GH_TOKEN="$INSTALL_TOKEN" HERDR_RELEASE_STAGE_ONLY=1 sh "$INSTALLER" "$VERSION")"
+        case "$lock_release" in "$INSTALL_ROOT"/releases/*) ;; *) echo 'Invalid staged lock-helper release.' >&2; exit 1 ;; esac
+        case "$lock_release" in *$'\n'*) exit 1 ;; esac
+        "$lock_release/herdr-mobile-relay" verify-release "$lock_release" >/dev/null
+        export HERDR_RELAY_BIN="$lock_release/herdr-mobile-relay"
+    fi
+fi
 relay_require_legacy_transport "$TARGET_ENV" migration
 [ -z "$(find "$TARGET_CONFIG_ROOT" -type l -print -quit)" ] || exit 1
 if [ -e "$TARGET_ENV" ]; then fresh_environment=false; fi
@@ -713,6 +725,8 @@ if [ "$service_restarted" = true ]; then
 fi
 
 rollback_armed=false
+# The temporary lock-helper selection must not escape into a setup handoff.
+if [ "$PLATFORM" = Darwin ] && [ -n "${lock_release:-}" ]; then unset HERDR_RELAY_BIN; fi
 
 # Nobody sees this script's output, so an install that only prints "release is
 # ready" leaves a person with no idea what exists or what is still missing. The

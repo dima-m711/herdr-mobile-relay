@@ -52,7 +52,7 @@ cleanup_origin() {
         if cmp -s "$TAILSCALE_ENV" "$backup/new.env" && tailscale_check_managed_unit && tailscale_check_loaded_unit; then
             stage="$(mktemp "$TAILSCALE_CONFIG_DIR/.app-restore.XXXXXX")"
             if cp "$backup/old.env" "$stage" && chmod 600 "$stage" && mv -f "$stage" "$TAILSCALE_ENV" &&
-               systemctl --user restart "$TAILSCALE_LABEL" && tailscale_pairing_ready; then
+               tailscale_service restart "$TAILSCALE_LABEL" && tailscale_pairing_ready; then
                 echo 'Previous app configuration restored; existing device credentials were retained.' >&2
             else
                 echo "App-origin recovery needs review; private evidence retained at $backup" >&2
@@ -69,13 +69,13 @@ cleanup_origin() {
 trap cleanup_origin EXIT
 trap 'exit 130' INT TERM
 if [ "$APP_ORIGIN" != "$SAVED_APP" ]; then
-    before="$(sha256sum "$TAILSCALE_ENV")"
+    before="$(tailscale_hash "$TAILSCALE_ENV")"
     echo "App origin: $APP_ORIGIN; relay endpoint remains $TAILSCALE_ORIGIN."
     echo 'Changing the app origin requires restarting this relay, not moving its Serve route or resetting credentials.'
     tailscale_confirm 'Save this app origin and restart the private service?'
     tailscale_pairing_ready
     tailscale_app_ready "$APP_ORIGIN"
-    [ "$(sha256sum "$TAILSCALE_ENV")" = "$before" ] || { echo 'Configuration changed during approval.' >&2; exit 1; }
+    [ "$(tailscale_hash "$TAILSCALE_ENV")" = "$before" ] || { echo 'Configuration changed during approval.' >&2; exit 1; }
     backup="$(mktemp -d "$TAILSCALE_CONFIG_DIR/app-origin-recovery.XXXXXX")"
     cp "$TAILSCALE_ENV" "$backup/old.env"
     sed -E 's/^[[:space:]]*(export[[:space:]]+)?//' "$TAILSCALE_ENV" > "$backup/new.env"
@@ -89,10 +89,10 @@ if [ "$APP_ORIGIN" != "$SAVED_APP" ]; then
     "$TAILSCALE_BINARY" tailscale-preflight environment "$backup/new.env"
     stage="$(mktemp "$TAILSCALE_CONFIG_DIR/.app-env.XXXXXX")"
     cp "$backup/new.env" "$stage"; chmod 600 "$stage"
-    [ "$(sha256sum "$TAILSCALE_ENV")" = "$before" ] || exit 1
+    [ "$(tailscale_hash "$TAILSCALE_ENV")" = "$before" ] || exit 1
     changed=true
     mv -f "$stage" "$TAILSCALE_ENV"
-    systemctl --user restart "$TAILSCALE_LABEL"
+    tailscale_service restart "$TAILSCALE_LABEL"
     tailscale_pairing_ready
     tailscale_app_ready "$APP_ORIGIN"
     committed=true
@@ -104,7 +104,7 @@ fi
 echo "Private app: $APP_ORIGIN"
 echo "This relay: $TAILSCALE_ORIGIN"
 echo 'The app host must stay reachable. Pairing one more phone does not revoke existing phones.'
-PID="$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)"
+PID="$(tailscale_service_pid)"
 COLS="$(tput cols 2>/dev/null || printf 80)"
 "$TAILSCALE_BINARY" tailscale-pairing show "$TAILSCALE_ENV" "$PID" "$APP_ORIGIN" "$TAILSCALE_ORIGIN" "$TAILSCALE_HOST" "$COLS"
 relay_drop_setup_lock "$TAILSCALE_CONFIG_DIR"

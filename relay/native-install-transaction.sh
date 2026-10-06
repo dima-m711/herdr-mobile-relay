@@ -48,7 +48,9 @@ native_install_begin() {
         fi
         index=$((index + 1))
     done
-    if [ "$native_manager" = systemd ]; then
+    if declare -F native_install_snapshot_activation >/dev/null; then
+        native_install_snapshot_activation || return 1
+    elif [ "$native_manager" = systemd ]; then
         systemctl --user show-environment >/dev/null || return 1
         native_active="$(native_systemd_state is-active "$native_label")" || return 1
         native_enabled="$(native_systemd_state is-enabled "$native_label")" || return 1
@@ -109,6 +111,7 @@ native_install_restore_files() {
 }
 
 native_install_restore_activation() {
+    if declare -F native_install_restore_private_activation >/dev/null; then native_install_restore_private_activation; return; fi
     local failed=false label active enabled
     if [ "$native_manager" = systemd ]; then
         systemctl --user daemon-reload || failed=true
@@ -163,7 +166,9 @@ native_install_exit() {
         failed=true
     fi
     if [ "$restore_allowed" = true ] && [ "$native_changed" = true ]; then
-        if [ "$native_manager" = systemd ]; then
+        if declare -F native_install_stop_for_restore >/dev/null; then
+            native_install_stop_for_restore || failed=true
+        elif [ "$native_manager" = systemd ]; then
             if [ "${native_skip_stop:-false}" != true ]; then
                 systemctl --user stop "$native_label" || failed=true
                 if [ "$native_enabled" = false ]; then systemctl --user disable "$native_label" || failed=true; fi
