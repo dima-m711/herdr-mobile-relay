@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -204,7 +205,7 @@ func installPlugin(ctx context.Context, job Job) error {
 		for key, value := range map[string]string{
 			"HERDR_RELAY_ENV": job.Environment, "HERDR_PLUGIN_CONFIG_DIR": filepath.Dir(job.Environment),
 			"HERDR_RELEASE_ROOT": job.ReleaseRoot, "HERDR_CONNECTION_MODE": config.ConnectionModeTailscale,
-			"HERDR_RELAY_SERVICE_NAME": "herdr-mobile-relay-tailscale.service",
+			"HERDR_RELAY_SERVICE_NAME": setuphelper.TailscaleServiceName(runtime.GOOS),
 			"HERDR_RELEASE_REPOSITORY": relayrelease.Repository, "HERDR_UPDATE_EXPECTED_REVISION": strings.ToLower(job.TargetRevision),
 		} {
 			filtered := command.Env[:0]
@@ -378,14 +379,14 @@ func validatePrivateJob(job Job) error {
 	if err != nil {
 		return err
 	}
-	if values["HERDR_CONNECTION_MODE"] != config.ConnectionModeTailscale || values["HERDR_RELAY_SERVICE_NAME"] != "herdr-mobile-relay-tailscale.service" || values["HERDR_RELEASE_ROOT"] != job.ReleaseRoot || values["HERDR_BIN"] != job.HerdrBin {
+	if values["HERDR_CONNECTION_MODE"] != config.ConnectionModeTailscale || values["HERDR_RELAY_SERVICE_NAME"] != setuphelper.TailscaleServiceName(runtime.GOOS) || values["HERDR_RELEASE_ROOT"] != job.ReleaseRoot || values["HERDR_BIN"] != job.HerdrBin {
 		return errors.New("private update policy or installation identity changed")
 	}
 	state, err := setuphelper.ReadTailscaleState(filepath.Join(filepath.Dir(job.Environment), "tailscale-setup.json"))
 	if err != nil {
 		return err
 	}
-	if state.Phase != "verified" || state.Environment != job.Environment || filepath.Base(state.Unit) != "herdr-mobile-relay-tailscale.service" || state.Instance != values["HERDR_RELAY_INSTANCE_ID"] {
+	if state.Phase != "verified" || state.Environment != job.Environment || filepath.Base(state.Unit) != setuphelper.TailscaleServiceFile(runtime.GOOS) || state.Instance != values["HERDR_RELAY_INSTANCE_ID"] {
 		return errors.New("private setup is not verified for this update")
 	}
 	if job.HealthURL != fmt.Sprintf("http://127.0.0.1:%d/healthz", state.RelayPort) {

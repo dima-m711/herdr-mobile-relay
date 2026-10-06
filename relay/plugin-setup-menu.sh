@@ -191,14 +191,14 @@ render_menu() {
     echo ""
     echo "Connection"
     echo ""
-    if [ "$(uname -s)" = Linux ]; then
+    if [ "$(uname -s)" = Linux ] || [ "$(uname -s)" = Darwin ]; then
         menu_item 0 'Tailscale Private Setup (recommended)'
         echo '     Requires your already-connected Tailscale; no enrollment or public fallback.'
-        menu_item a 'Adopt Recognized Tailscale Runbook Installation'
+        if [ "$(uname -s)" = Linux ]; then menu_item a 'Adopt Recognized Tailscale Runbook Installation'; fi
         menu_item p 'Start or Restart Managed Tailscale Service'
         menu_item r 'Recover Interrupted Tailscale Setup'
         menu_item t 'Teardown Tailscale Service (retain credentials and pairings)'
-        echo '     Linger is never enabled automatically. Existing alternatives are opt-in.'
+        echo '     Uses your login session. Existing transport choices are not changed automatically.'
         echo ''
     fi
     menu_item 1 "Temporary Cloudflare Tunnel"
@@ -275,7 +275,7 @@ while true; do
         fi
         case "${choice:-$DEFAULT_CHOICE}" in
             0|a|p|r|t)
-                if [ "$(uname -s)" != Linux ]; then echo 'Tailscale service setup currently requires Linux.'; continue; fi
+                case "$(uname -s)" in Linux|Darwin) ;; *) echo 'Tailscale service setup requires Linux or macOS.'; continue ;; esac
                 case "$choice" in
                     a) run_action "$SCRIPT_DIR/tailscale-setup.sh" --adopt-runbook ;;
                     p) run_action "$SCRIPT_DIR/tailscale-control.sh" restart ;;

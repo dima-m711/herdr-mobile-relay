@@ -52,14 +52,21 @@ func TestTailscaleStaticEnvironment(t *testing.T) {
 }
 
 func TestTailscaleManagedEnvironment(t *testing.T) {
+	for _, unit := range []string{"herdr-mobile-relay-tailscale.service", "com.herdr-mobile-relay.tailscale.plist"} {
+		t.Run(unit, func(t *testing.T) { testTailscaleManagedEnvironment(t, unit) })
+	}
+}
+
+func testTailscaleManagedEnvironment(t *testing.T, unit string) {
 	statePath, state := tailscaleStateFixture(t)
+	state.Unit = filepath.Join(filepath.Dir(state.Unit), unit)
 	if err := CreateTailscaleState(statePath, state); err != nil {
 		t.Fatal(err)
 	}
 	root := filepath.Join(filepath.Dir(statePath), "releases")
 	values := map[string]string{
 		"HERDR_CONNECTION_MODE": "tailscale", "HERDR_RELAY_HOST": "127.0.0.1", "HERDR_TRANSPORT_FORCE_RELAY": "1", "HERDR_REACHABILITY_PORT_MAPPING": "0", "HERDR_RELAY_REARM_BOOTSTRAP": "0", "HERDR_GATEWAY_URL": "",
-		"HERDR_RELAY_PORT": "8375", "HERDR_RELAY_PLUGIN_PORT": "8376", "HERDR_SOCKET_PATH": state.Socket, "HERDR_RELAY_INSTANCE_ID": state.Instance, "HERDR_RELAY_SERVICE_NAME": filepath.Base(state.Unit), "HERDR_RELEASE_ROOT": root, "HERDR_WEB_ROOT": filepath.Join(root, "current", "web"), "HERDR_RELAY_TOKEN": strings.Repeat("a", 32),
+		"HERDR_RELAY_PORT": "8375", "HERDR_RELAY_PLUGIN_PORT": "8376", "HERDR_SOCKET_PATH": state.Socket, "HERDR_RELAY_INSTANCE_ID": state.Instance, "HERDR_RELAY_SERVICE_NAME": strings.TrimSuffix(filepath.Base(state.Unit), ".plist"), "HERDR_RELEASE_ROOT": root, "HERDR_WEB_ROOT": filepath.Join(root, "current", "web"), "HERDR_RELAY_TOKEN": strings.Repeat("a", 32),
 	}
 	write := func() {
 		t.Helper()

@@ -46,10 +46,13 @@ relay_record_connection_method "$WORK/relay/.env" temporary
 [[ "$(relay_default_setup "$WORK/relay/.env")" == legacy ]]
 relay_record_connection_method "$WORK/relay/.env" unselected
 [[ "$(relay_default_setup "$WORK/relay/.env")" == tailscale ]]
-# macOS keeps its existing default and has no private-service setup action.
+# macOS keeps its existing default, but offers explicit private setup.
 export TEST_SYSTEM=Darwin
 printf '\nq\n' | bash "$WORK/relay/plugin-setup-menu.sh" > "$WORK/mac-menu" 2>&1
 [[ "$(tail -1 "$TEST_ACTIONS")" == 'plugin-choose-transport temporary' ]]
-if grep -q 'Tailscale Private Setup' "$WORK/mac-menu"; then echo 'Linux-only menu shown on macOS' >&2; exit 1; fi
+grep -q 'Tailscale Private Setup' "$WORK/mac-menu"
+if grep -q 'Adopt Recognized Tailscale Runbook' "$WORK/mac-menu"; then echo 'Linux runbook adoption shown on macOS' >&2; exit 1; fi
+printf '0\nq\n' | bash "$WORK/relay/plugin-setup-menu.sh" > "$WORK/mac-private-menu" 2>&1
+[[ "$(tail -1 "$TEST_ACTIONS")" == 'tailscale-setup ' ]]
 # macOS's legacy status probes are fake and may run; private/fresh Linux never did.
 echo 'Tailscale default and menu tests passed'

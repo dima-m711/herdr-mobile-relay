@@ -2,7 +2,7 @@
 
 [![check](https://github.com/dima-m711/herdr-mobile-relay/actions/workflows/check.yml/badge.svg)](https://github.com/dima-m711/herdr-mobile-relay/actions/workflows/check.yml)
 
-> **Fork development branch:** Linux defaults to private Tailscale setup; existing explicit alternatives and macOS remain supported. See [private Linux setup, adoption and updates](docs/tailscale-linux.md). No fork release is published by this work; do not substitute an upstream bundle for a private-capable fork release.
+> **Fork development branch:** Linux defaults to private Tailscale setup; existing explicit alternatives and macOS remain supported. See [private Linux setup, adoption and updates](docs/tailscale-linux.md) and [explicit macOS Tailscale setup](docs/tailscale-macos.md). No fork release is published by this work; do not substitute an upstream bundle for a private-capable fork release.
 >
 > Fork of [0cv/herdr-mobile-relay](https://github.com/0cv/herdr-mobile-relay), retaining upstream attribution and AGPL-3.0-or-later licensing.
 

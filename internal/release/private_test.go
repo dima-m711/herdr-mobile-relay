@@ -6,6 +6,33 @@ import (
 	"testing"
 )
 
+func TestPrivateDarwinReleaseContract(t *testing.T) {
+	for _, target := range []string{"darwin/arm64", "darwin/amd64"} {
+		t.Run(target, func(t *testing.T) {
+			root := testRelease(t)
+			for _, helper := range append(append([]string{}, tailscaleHelpers...), "relay/tailscale-darwin.sh") {
+				if err := os.WriteFile(filepath.Join(root, helper), []byte("#!/bin/sh\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			manifest, err := Build(root, "1.2.3", "fixture", target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateTailscaleRelease(manifest); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Verify(root, target); err != nil {
+				t.Fatal(err)
+			}
+			manifest.Files["relay/tailscale-darwin.sh"] = ""
+			if err := ValidateTailscaleRelease(manifest); err == nil {
+				t.Fatal("Darwin bundle without its backend accepted")
+			}
+		})
+	}
+}
+
 func TestPrivateReleaseContractRequiresCompleteForkBundle(t *testing.T) {
 	root := testRelease(t)
 	legacy, err := Build(root, "1.2.3", "fixture", "linux/amd64")
