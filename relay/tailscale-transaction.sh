@@ -34,9 +34,11 @@ tailscale_check_managed_unit() {
 
 tailscale_no_other_services() {
     local other
-    for other in herdr-mobile-relay.service herdr-remote.service; do
-        if [ -e "$TAILSCALE_UNIT_DIR/$other" ] || [ -L "$TAILSCALE_UNIT_DIR/$other" ] ||
-           [ "$(native_systemd_state is-active "$other")" = true ] || [ "$(native_systemd_state is-enabled "$other")" = true ]; then
+    local labels='herdr-mobile-relay.service herdr-remote.service' suffix=''
+    if [ "${TAILSCALE_MANAGER:-systemd}" = launchd ]; then labels='com.herdr-mobile-relay.service com.herdr-remote.service'; suffix=.plist; fi
+    for other in $labels; do
+        if [ -e "$TAILSCALE_UNIT_DIR/$other$suffix" ] || [ -L "$TAILSCALE_UNIT_DIR/$other$suffix" ] ||
+           [ "$(tailscale_service_state is-active "$other")" = true ] || [ "$(tailscale_service_state is-enabled "$other")" = true ]; then
             echo 'Another relay service exists. Review and remove the conflict explicitly before changing transport.' >&2
             return 1
         fi
@@ -44,6 +46,7 @@ tailscale_no_other_services() {
 }
 
 tailscale_check_loaded_unit() {
+    if [ "${TAILSCALE_MANAGER:-systemd}" = launchd ]; then tailscale_darwin_check_loaded; return; fi
     local fragment overrides
     fragment="$(timeout 10 systemctl --user show "$TAILSCALE_LABEL" --property FragmentPath --value)" || return 1
     overrides="$(timeout 10 systemctl --user show "$TAILSCALE_LABEL" --property DropInPaths --value)" || return 1
@@ -70,7 +73,7 @@ tailscale_verify_removed() {
     tailscale_check_state_identity || return 1
     tailscale_no_other_services || return 1
     [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] &&
-        [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(native_systemd_state is-enabled "$TAILSCALE_LABEL")" = false ] || return 1
+        [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(tailscale_service_state is-enabled "$TAILSCALE_LABEL")" = false ] || return 1
     "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT" || return 1
     "$TAILSCALE_BINARY" tailscale-preflight ports "$TAILSCALE_PORT" "$(tailscale_env_value HERDR_RELAY_PLUGIN_PORT)" || return 1
     if [ "$(tailscale_state_value route_ownership)" = created ]; then
@@ -82,7 +85,7 @@ tailscale_verify_removed() {
 tailscale_local_ready() {
     local pid healthz
     TAILSCALE_HEALTH="$(wait_for_relay_health "$TAILSCALE_PORT" 15 1 "$TAILSCALE_INSTANCE")" || return 1
-    pid="$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)" || return 1
+    pid="$(tailscale_service_pid)" || return 1
     "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$TAILSCALE_PORT" "$TAILSCALE_BINARY" || return 1
     healthz="$(curl -fsS --max-time 5 "http://127.0.0.1:$TAILSCALE_PORT/healthz")" || return 1
     printf '%s' "$healthz" | "$TAILSCALE_BINARY" tailscale-preflight gateway-disabled
@@ -94,8 +97,8 @@ tailscale_local_ready() {
 native_install_readiness_snapshot() {
     local port="$1" instance="$2" version="${3:-}" revision="${4:-}" web_hash="${5:-}"
     local pid executable ready health receipt
-    executable="$(realpath -e "$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay")" || return 1
-    pid="$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)" || return 1
+    executable="$(tailscale_realpath "$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay")" || return 1
+    pid="$(tailscale_service_pid)" || return 1
     "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$port" "$executable" || return 1
     ready="$(curl -fsS --noproxy '*' --max-time 2 --max-filesize 65536 "http://127.0.0.1:$port/readyz")" || return 1
     if printf '%s' "$ready" | "$TAILSCALE_BINARY" verify-readiness "$instance" "$version" "$revision" "$web_hash" 2>/dev/null; then
@@ -106,8 +109,8 @@ native_install_readiness_snapshot() {
         receipt="$(printf '{"ready":%s,"health":%s}' "$ready" "$health" |
             "$TAILSCALE_BINARY" tailscale-preflight runbook-readiness "$instance" "$version" "$revision" "$web_hash")" || return 1
     fi
-    [ "$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)" = "$pid" ] &&
-        [ "$(realpath -e "$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay")" = "$executable" ] || return 1
+    [ "$(tailscale_service_pid)" = "$pid" ] &&
+        [ "$(tailscale_realpath "$TAILSCALE_RELEASE_ROOT/current/herdr-mobile-relay")" = "$executable" ] || return 1
     "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$port" "$executable" || return 1
     printf '%s\n' "$receipt"
 }
@@ -176,7 +179,7 @@ tailscale_change_route() {
     if [ "${TAILSCALE_SUDO:-false}" = true ]; then command=(sudo -- "${command[@]}"); fi
     # Permission and HTTPS consent stay on the attached terminal. No automatic
     # sudo retry: a failed command may already have changed daemon state.
-    timeout --foreground 120 "${command[@]}"
+    tailscale_timeout --foreground 120 "${command[@]}"
 }
 
 native_install_pre_restore() {
@@ -213,7 +216,7 @@ native_install_restore_allowed() {
     local path old new kind
     native_skip_stop=false
     if [ -e "$TAILSCALE_UNIT" ] || [ -L "$TAILSCALE_UNIT" ]; then tailscale_check_loaded_unit || return 1
-    elif [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ]; then native_skip_stop=true
+    elif [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = false ]; then native_skip_stop=true
     else echo 'An active service lost its definition; manual recovery review required.' >&2; return 1; fi
     for kind in unit environment; do
         if [ "$kind" = unit ]; then path="$TAILSCALE_UNIT"; old="$native_recovery/0"; new="$native_recovery/new.service"
@@ -244,7 +247,7 @@ tailscale_check_release_recovery() {
     record="$("$TAILSCALE_BINARY" tailscale-preflight release-record "$native_recovery" "$TAILSCALE_RELEASE_ROOT")" || return 1
     IFS=$'\t' read -r TAILSCALE_PREVIOUS_RELEASE TAILSCALE_CANDIDATE_RELEASE <<< "$record"
     [ -L "$TAILSCALE_RELEASE_ROOT/current" ] || return 1
-    current="$(realpath -e "$TAILSCALE_RELEASE_ROOT/current")" || return 1
+    current="$(tailscale_realpath "$TAILSCALE_RELEASE_ROOT/current")" || return 1
     [ "$current" = "$TAILSCALE_PREVIOUS_RELEASE" ] || [ "$current" = "$TAILSCALE_CANDIDATE_RELEASE" ] || { echo 'Release pointer changed externally; refusing bootstrap rollback.' >&2; return 1; }
     "$TAILSCALE_PREVIOUS_RELEASE/herdr-mobile-relay" verify-release "$TAILSCALE_PREVIOUS_RELEASE" >/dev/null
 }
@@ -284,7 +287,7 @@ tailscale_recover() {
     fi
     if [ -e "$TAILSCALE_UNIT" ] || [ -L "$TAILSCALE_UNIT" ]; then
         tailscale_check_managed_unit || "$TAILSCALE_BINARY" tailscale-preflight runbook "$TAILSCALE_UNIT" "$TAILSCALE_CONFIG_DIR/start-tailscale-relay.sh" || return 1
-    elif [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = true ]; then
+    elif [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = true ]; then
         echo 'An active service has no recognized unit file; refusing automatic recovery.' >&2
         return 1
     fi
@@ -292,7 +295,7 @@ tailscale_recover() {
     if [ "$TAILSCALE_KEEP_ROUTE" = true ]; then echo 'The Serve endpoint will be retained even if this attempt created it.'; fi
     tailscale_confirm 'Approve this recovery?' || return 1
     IFS=$'\t' read -r native_active native_enabled <<< "$flags"
-    native_manager=systemd native_definition="$TAILSCALE_UNIT" native_environment="$TAILSCALE_ENV" native_label="$TAILSCALE_LABEL"
+    native_manager="${TAILSCALE_MANAGER:-systemd}" native_definition="$TAILSCALE_UNIT" native_environment="$TAILSCALE_ENV" native_label="$TAILSCALE_LABEL"
     native_legacy_definition='' native_legacy_label='' native_legacy_active=false native_legacy_enabled=false
     native_snapshot_complete=true native_changed=true native_committed=false native_stage='' native_keep_recovery=true
     native_previous_port="$TAILSCALE_PORT" native_previous_ready=false native_recovery_command=true
@@ -302,4 +305,34 @@ tailscale_recover() {
         native_previous_ready=true
     fi
     native_install_exit
+}
+
+# Private hooks keep the generic legacy transaction unchanged while preserving
+# the platform's active/enabled intent through a failed private setup.
+native_install_snapshot_activation() {
+    native_active="$(tailscale_service_state is-active "$native_label")" || return 1
+    native_enabled="$(tailscale_service_state is-enabled "$native_label")"
+}
+native_install_stop_for_restore() {
+    [ "${native_skip_stop:-false}" != true ] || return 0
+    tailscale_service stop "$native_label" || return 1
+    if [ "$native_enabled" = false ] && [ -f "$native_definition" ]; then tailscale_service disable "$native_label"; fi
+}
+native_install_restore_private_activation() {
+    tailscale_service daemon-reload || return 1
+    if [ -f "$native_definition" ]; then
+        if [ "$native_enabled" = true ]; then tailscale_service enable "$native_label" || return 1
+        else tailscale_service disable "$native_label" || return 1; fi
+    fi
+    if [ "$native_active" = true ]; then
+        # launchd refuses bootstrap of a disabled job. Restore its running state
+        # first, then restore the disabled-at-next-login override on this job.
+        if [ "${TAILSCALE_MANAGER:-systemd}" = launchd ] && [ "$native_enabled" = false ]; then
+            tailscale_service enable "$native_label" || return 1
+            local restarted=true
+            tailscale_service restart "$native_label" || restarted=false
+            tailscale_service disable "$native_label" || return 1
+            [ "$restarted" = true ]
+        else tailscale_service restart "$native_label"; fi
+    fi
 }

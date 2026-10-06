@@ -1,6 +1,6 @@
 # Herdr Mobile Relay Quick Start
 
-For this fork's **private Linux default**, follow [Tailscale setup and runbook adoption](docs/tailscale-linux.md). That guide also explains fork release availability and shared app origins. The instructions below are for explicitly chosen legacy transports and existing macOS behavior; they are not a fallback when private setup fails.
+For this fork's **private Linux default**, follow [Tailscale setup and runbook adoption](docs/tailscale-linux.md). That guide also explains fork release availability and shared app origins. macOS users can explicitly choose [Tailscale Private Setup](docs/tailscale-macos.md); existing macOS defaults are unchanged. The instructions below are for legacy transports, not a fallback when private setup fails.
 
 Connect one Linux or macOS computer to your phone through a temporary Cloudflare
 tunnel, or through a gateway that needs no Cloudflare account (see **Skip

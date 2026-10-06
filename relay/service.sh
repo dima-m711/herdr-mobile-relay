@@ -23,6 +23,7 @@ if [ "$MODE" = tailscale ]; then
 fi
 case "$(uname -s)" in
     Darwin)
+        case "$ACTION" in status|logs) ;; *) relay_require_legacy_transport "$ENV_FILE" ;; esac
         case "$ACTION" in
             install) exec "$SCRIPT_DIR/install-service.sh" ;;
             uninstall) exec "$SCRIPT_DIR/uninstall-service.sh" ;;

@@ -35,8 +35,8 @@ tailscale_check_state_identity
 case "$PHASE" in
     removed)
         [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] &&
-            [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] &&
-            [ "$(native_systemd_state is-enabled "$TAILSCALE_LABEL")" = false ] || {
+            [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = false ] &&
+            [ "$(tailscale_service_state is-enabled "$TAILSCALE_LABEL")" = false ] || {
             echo 'Service resources reappeared after teardown; review them rather than inferring ownership.' >&2; exit 1;
         }
         echo 'Recorded teardown is complete; retained credentials and external routes are unchanged.'
@@ -45,18 +45,18 @@ case "$PHASE" in
     *) echo 'An installation is incomplete. Recover it with tailscale-setup.sh --recover before teardown.' >&2; exit 1 ;;
 esac
 "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT"
-ENV_DIGEST="$(sha256sum "$TAILSCALE_ENV")"
+ENV_DIGEST="$(tailscale_hash "$TAILSCALE_ENV")"
 UNIT_PRESENT=false
 if [ -e "$TAILSCALE_UNIT" ] || [ -L "$TAILSCALE_UNIT" ]; then
     tailscale_check_managed_unit || { echo 'Unit changed; refusing to remove an unfamiliar definition.' >&2; exit 1; }
     tailscale_check_loaded_unit
     UNIT_PRESENT=true
-    if [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = true ]; then
-        pid="$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)"
+    if [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = true ]; then
+        pid="$(tailscale_service_pid)"
         "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$TAILSCALE_PORT" "$TAILSCALE_BINARY"
     fi
 else
-    [ "$PHASE" = teardown-pending ] && [ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] || {
+    [ "$PHASE" = teardown-pending ] && [ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = false ] || {
         echo 'The recorded service definition disappeared; inspect its ownership before cleanup.' >&2; exit 1;
     }
 fi
@@ -75,7 +75,7 @@ tailscale_confirm 'Approve this teardown?'
 # Capture a new baseline for teardown; unrelated routes may legitimately have
 # changed since installation. Only changes during this operation are conflicts.
 "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT"
-[ "$(sha256sum "$TAILSCALE_ENV")" = "$ENV_DIGEST" ] || { echo 'Environment changed during approval; aborting.' >&2; exit 1; }
+[ "$(tailscale_hash "$TAILSCALE_ENV")" = "$ENV_DIGEST" ] || { echo 'Environment changed during approval; aborting.' >&2; exit 1; }
 if [ "$UNIT_PRESENT" = true ]; then tailscale_check_managed_unit; tailscale_check_loaded_unit
 else [ ! -e "$TAILSCALE_UNIT" ] && [ ! -L "$TAILSCALE_UNIT" ] || exit 1; fi
 tailscale_read_serve
@@ -87,13 +87,13 @@ if [ "$OWNERSHIP" = created ] && [ "$TAILSCALE_ROUTE_STATE" = matching ]; then
     [ "$TAILSCALE_ROUTE_STATE" = absent ] && [ "$TAILSCALE_DIGEST" = "$BEFORE_DIGEST" ] || { echo 'Serve changed during removal; teardown remains pending for review.' >&2; exit 1; }
 fi
 if [ "$UNIT_PRESENT" = true ]; then
-    systemctl --user disable --now "$TAILSCALE_LABEL"
+    tailscale_service disable --now "$TAILSCALE_LABEL"
     tailscale_check_managed_unit
     tailscale_check_loaded_unit
-    [ "$(sha256sum "$TAILSCALE_ENV")" = "$ENV_DIGEST" ] || exit 1
+    [ "$(tailscale_hash "$TAILSCALE_ENV")" = "$ENV_DIGEST" ] || exit 1
     rm -- "$TAILSCALE_UNIT"
 fi
-systemctl --user daemon-reload
-[ "$(native_systemd_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(native_systemd_state is-enabled "$TAILSCALE_LABEL")" = false ] || exit 1
+tailscale_service daemon-reload
+[ "$(tailscale_service_state is-active "$TAILSCALE_LABEL")" = false ] && [ "$(tailscale_service_state is-enabled "$TAILSCALE_LABEL")" = false ] || exit 1
 "$TAILSCALE_BINARY" tailscale-state advance "$TAILSCALE_STATE" teardown-pending removed
 echo 'Owned teardown complete. Credentials and paired-device data were retained; adopted routes were not removed.'

@@ -9,8 +9,10 @@ set +x
 # Linux only; preflight must already have approved the private config directory.
 tailscale_acquire_setup_lock() {
     local directory="$1"
+    local identity
+    identity="$(stat -c '%u:%a' "$directory" 2>/dev/null)" || identity="$(stat -f '%u:%Lp' "$directory" 2>/dev/null)" || return 1
     if [ ! -d "$directory" ] || [ -L "$directory" ] ||
-       [ "$(stat -c '%u:%a' "$directory" 2>/dev/null)" != "$(id -u):700" ]; then
+       [ "$identity" != "$(id -u):700" ]; then
         echo 'Setup locking requires an owned mode-0700 configuration directory.' >&2
         return 1
     fi
@@ -21,10 +23,16 @@ tailscale_acquire_setup_lock() {
 # service. Configuration creation belongs after the human approves the summary.
 tailscale_setup_context() {
     local command_name
-    if [ "$(uname -s)" != Linux ]; then
-        echo 'Tailscale setup currently supports Linux systemd user services only.' >&2
-        return 1
-    fi
+    TAILSCALE_MANAGER=systemd
+    case "$(uname -s)" in
+        Linux) ;;
+        Darwin)
+            TAILSCALE_MANAGER=launchd
+            export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+            . "$(dirname "${BASH_SOURCE[0]}")/tailscale-darwin.sh"
+            ;;
+        *) echo 'Tailscale setup supports Linux and macOS user services only.' >&2; return 1 ;;
+    esac
     case "$(uname -m)" in x86_64|aarch64|arm64) ;; *) echo 'Supported Tailscale setup architectures: amd64 and arm64.' >&2; return 1 ;; esac
     require_user_service_context || return 1
     case "$HOME" in /*) ;; *) return 1 ;; esac
@@ -39,6 +47,11 @@ tailscale_setup_context() {
     TAILSCALE_LABEL=herdr-mobile-relay-tailscale.service
     TAILSCALE_UNIT_DIR="$HOME/.config/systemd/user"
     TAILSCALE_UNIT="$TAILSCALE_UNIT_DIR/$TAILSCALE_LABEL"
+    if [ "$TAILSCALE_MANAGER" = launchd ]; then
+        TAILSCALE_LABEL=com.herdr-mobile-relay.tailscale
+        TAILSCALE_UNIT_DIR="$HOME/Library/LaunchAgents"
+        TAILSCALE_UNIT="$TAILSCALE_UNIT_DIR/$TAILSCALE_LABEL.plist"
+    fi
     TAILSCALE_RELEASE_ROOT="$HOME/.local/share/herdr-mobile-relay"
     if [ "${XDG_CONFIG_HOME:-$HOME/.config}" != "$HOME/.config" ] ||
        [ "${XDG_DATA_HOME:-$HOME/.local/share}" != "$HOME/.local/share" ] ||
@@ -51,16 +64,24 @@ tailscale_setup_context() {
         return 1
     fi
     tailscale_validate_directories || return 1
-    for command_name in timeout flock curl systemctl systemd-analyze sha256sum; do
+    local prerequisites='timeout flock curl systemctl systemd-analyze sha256sum'
+    if [ "$TAILSCALE_MANAGER" = launchd ]; then prerequisites='curl /bin/launchctl /usr/bin/plutil /usr/sbin/lsof'; fi
+    for command_name in $prerequisites; do
         command -v "$command_name" >/dev/null 2>&1 || {
             echo "Missing setup prerequisite: $command_name (no tools were installed)." >&2
             return 1
         }
     done
-    timeout 10 systemctl --user show-environment >/dev/null 2>&1 || {
-        echo 'The systemd user manager is unavailable. Sign in normally; do not run setup with sudo.' >&2
-        return 1
-    }
+    if [ "$TAILSCALE_MANAGER" = launchd ]; then
+        tailscale_launchctl print "gui/$UID" >/dev/null 2>&1 || {
+            echo 'A signed-in macOS GUI session is required; do not use sudo or a headless daemon.' >&2; return 1;
+        }
+    else
+        timeout 10 systemctl --user show-environment >/dev/null 2>&1 || {
+            echo 'The systemd user manager is unavailable. Sign in normally; do not run setup with sudo.' >&2
+            return 1
+        }
+    fi
 }
 
 # Repeat after terminal consent: administrators do not share our lease.
@@ -79,6 +100,7 @@ tailscale_validate_directories() {
 }
 
 tailscale_render_unit() {
+    if [ "${TAILSCALE_MANAGER:-systemd}" = launchd ]; then tailscale_render_launchagent "$@"; return; fi
     local work environment launcher release="${1:-$TAILSCALE_RELEASE_ROOT/current}"
     work="$(systemd_quoted "$release")" || return 1
     environment="$(systemd_quoted "HERDR_RELAY_ENV=$TAILSCALE_ENV")" || return 1
@@ -96,11 +118,7 @@ tailscale_require_client() {
         echo 'Tailscale is required. Install and connect it before setup.' >&2
         return 1
     }
-    command -v timeout >/dev/null 2>&1 || {
-        echo 'GNU timeout is required for bounded Tailscale checks.' >&2
-        return 1
-    }
-    version="$(timeout 10 tailscale version 2>/dev/null)" || {
+    version="$(tailscale_timeout 10 tailscale version 2>/dev/null)" || {
         echo 'Cannot read the Tailscale client version.' >&2
         return 1
     }
@@ -121,7 +139,7 @@ tailscale_hostname() {
     local binary status
     tailscale_require_client || return 1
     binary="$(relay_binary)" || return 1
-    status="$(timeout 10 tailscale status --json --peers=false 2>/dev/null)" || {
+    status="$(tailscale_timeout 10 tailscale status --json --peers=false 2>/dev/null)" || {
         echo 'Cannot inspect Tailscale. Confirm the daemon is running and connected.' >&2
         return 1
     }
@@ -133,9 +151,52 @@ tailscale_serve_inspect() {
     [ "$#" -eq 3 ] || return 1
     tailscale_require_client || return 1
     binary="$(relay_binary)" || return 1
-    status="$(timeout 10 tailscale serve status --json 2>/dev/null)" || {
+    status="$(tailscale_timeout 10 tailscale serve status --json 2>/dev/null)" || {
         echo 'Cannot inspect Tailscale Serve. Resolve daemon access before setup; no state was changed.' >&2
         return 1
     }
     printf '%s' "$status" | "$binary" tailscale-inspect serve "$1" "$2" "$3"
+}
+
+# Keep GNU dependencies on Linux; macOS uses the already verified relay helper.
+tailscale_timeout() {
+    if [ "$(uname -s)" = Darwin ]; then
+        [ "${1:-}" != --foreground ] || shift
+        "$(relay_binary)" tailscale-platform run "$@"
+    else timeout "$@"; fi
+}
+tailscale_realpath() {
+    if [ "$(uname -s)" = Darwin ]; then "$(relay_binary)" tailscale-platform realpath "$1"
+    else realpath -e "$1"; fi
+}
+tailscale_hash() {
+    if [ "$(uname -s)" = Darwin ]; then "$(relay_binary)" tailscale-platform hash "$@"
+    else sha256sum "$@"; fi
+}
+tailscale_sync() {
+    if [ "$(uname -s)" = Darwin ]; then "$(relay_binary)" tailscale-platform sync "$1"
+    else sync -f "$1"; fi
+}
+tailscale_validate_unit() {
+    if [ "${TAILSCALE_MANAGER:-systemd}" = launchd ]; then /usr/bin/plutil -lint "$1" >/dev/null
+    else systemd-analyze --user verify "$1"; fi
+}
+tailscale_service_state() {
+    if [ "${TAILSCALE_MANAGER:-systemd}" = launchd ]; then tailscale_darwin_state "$@"
+    else native_systemd_state "$@"; fi
+}
+tailscale_service_pid() {
+    if [ "${TAILSCALE_MANAGER:-systemd}" = launchd ]; then tailscale_darwin_pid
+    else systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value; fi
+}
+tailscale_service() {
+    if [ "${TAILSCALE_MANAGER:-systemd}" != launchd ]; then systemctl --user "$@"; return; fi
+    local action="$1"; shift
+    if [ "$action" = daemon-reload ] && [ "$#" -eq 0 ]; then return 0; fi
+    if [ "$action" = disable ] && [ "${1:-}" = --now ]; then
+        shift; [ "$#" -eq 1 ] && [ "$1" = "$TAILSCALE_LABEL" ] || return 1
+        tailscale_darwin_service stop || return 1
+    fi
+    [ "$#" -eq 1 ] && [ "$1" = "$TAILSCALE_LABEL" ] || return 1
+    tailscale_darwin_service "$action"
 }

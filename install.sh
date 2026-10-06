@@ -352,6 +352,16 @@ prepare_install_roots() {
 # Serialize release-directory publication, including staging-only callers.
 # Private lifecycle orchestration takes its config lease before this lease.
 acquire_install_lock() {
+    if [ "$(uname -s)" = Darwin ]; then
+        install_lock="$1/.install.lock"
+        if [ ! -e "$install_lock" ] && [ ! -L "$install_lock" ]; then
+            (umask 077; set -C; : > "$install_lock") || fatal "could not create installer lock"
+        fi
+        private_owned_file "$install_lock" || fatal "unsafe installer lock"
+        exec 9>>"$install_lock"
+        "$stage/$BINARY" tailscale-platform lock-fd 9 "$install_lock" || fatal "another installation is running, or its lock changed"
+        return
+    fi
     [ "$(uname -s)" = Linux ] || return 0
     command -v flock >/dev/null 2>&1 || fatal "flock is required on Linux"
     install_lock="$1/.install.lock"
@@ -369,6 +379,29 @@ acquire_install_lock() {
 # standalone install uses a historical/custom legacy config root. Stage-only
 # publication never takes this lease or changes configuration roots.
 acquire_private_setup_lease() {
+    if [ "$(uname -s)" = Darwin ]; then
+        setup_directory="$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events"
+        ancestor="$setup_directory"
+        while [ "$ancestor" != / ]; do
+            [ ! -L "$ancestor" ] && { [ ! -e "$ancestor" ] || [ -d "$ancestor" ]; } || fatal "unsafe private setup directory"
+            ancestor=$(dirname "$ancestor")
+        done
+        (umask 077; mkdir -p "$setup_directory")
+        setup_lock="$setup_directory/.setup.lock"
+        if [ ! -e "$setup_lock" ] && [ ! -L "$setup_lock" ]; then
+            (umask 077; set -C; : > "$setup_lock") || fatal "could not create setup lock"
+        fi
+        private_owned_file "$setup_lock" || fatal "unsafe private setup lock"
+        setup_inherited=${HERDR_RELAY_SETUP_LOCK_FD:-}
+        case "$setup_inherited" in ''|8) ;; *) fatal "invalid inherited setup lease" ;; esac
+        if [ "$setup_inherited" = 8 ] && "$stage/$BINARY" tailscale-platform check-fd 8 "$setup_lock" 2>/dev/null; then
+            "$stage/$BINARY" tailscale-platform lock-fd 8 "$setup_lock" || fatal "another private lifecycle change is running"
+            return
+        fi
+        exec 8>>"$setup_lock"
+        "$stage/$BINARY" tailscale-platform lock-fd 8 "$setup_lock" || fatal "another private lifecycle change is running, or its lock changed"
+        return
+    fi
     [ "$(uname -s)" = Linux ] || return 0
     command -v flock >/dev/null 2>&1 || fatal "flock is required on Linux"
     setup_directory="$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events"
@@ -401,7 +434,9 @@ acquire_private_setup_lease() {
 
 refuse_private_activation() {
     if [ -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] ||
-       [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ]; then
+       [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] ||
+       [ -e "$HOME/Library/LaunchAgents/com.herdr-mobile-relay.tailscale.plist" ] ||
+       [ -L "$HOME/Library/LaunchAgents/com.herdr-mobile-relay.tailscale.plist" ]; then
         fatal "private installations require the Tailscale-aware plugin updater; standalone activation refused"
     fi
     for private_config in "$config_root" "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events"; do
