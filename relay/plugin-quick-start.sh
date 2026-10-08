@@ -7,6 +7,20 @@ if [ -n "${HERDR_BIN_PATH:-}" ]; then
     export HERDR_BIN="$HERDR_BIN_PATH"
 fi
 
+. "$SCRIPT_DIR/common.sh"
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$CONNECTION_MODE" = tailscale ]; then
+    bash "$SCRIPT_DIR/tailscale-control.sh" restart
+    if [ -t 0 ] && [ -t 1 ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh"; fi
+    echo 'Private service restarted. Open the pairing action in a private terminal to generate an invitation.'
+    exit 0
+fi
+DEFAULT_SETUP="$(relay_default_setup "$ENV_FILE")"
+if [ "$DEFAULT_SETUP" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-setup.sh"; fi
+relay_require_legacy_transport "$ENV_FILE"
+assert_selected_relay_definition "$ENV_FILE"
+
 echo "🐑 Herdr Mobile Relay plugin setup"
 echo ""
 echo "This pane installs missing user-level tools, creates private plugin"

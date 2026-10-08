@@ -13,13 +13,24 @@ cd "$SCRIPT_DIR"
 MODE="${1:-}"
 case "$MODE" in
     temporary | stable | community | own) ;;
+    tailscale) exec bash "$SCRIPT_DIR/tailscale-setup.sh" ;;
     *)
-        echo "Usage: $0 {temporary|stable|community|own}" >&2
+        echo "Usage: $0 {tailscale|temporary|stable|community|own}" >&2
         exit 2
         ;;
 esac
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$CONNECTION_MODE" = tailscale ]; then
+    bash "$SCRIPT_DIR/tailscale-switch.sh" "$MODE"
+    unset HERDR_CONNECTION_MODE HERDR_RELAY_SERVICE_NAME
+fi
+relay_require_legacy_transport "$ENV_FILE"
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
+# This invocation is the explicit legacy choice, including an empty temporary
+# gateway setting. Nested setup must not reinterpret it as a fresh install.
+export HERDR_LEGACY_SETUP=1
 CURRENT="$(gateway_urls "$ENV_FILE")"
 COMMUNITY="$(community_gateway_url)"
 
@@ -103,7 +114,7 @@ choose_own_gateway() {
     echo "  c. Back"
     echo ""
     while true; do
-        read -r -p "Choice [a]: " sub
+        read -r -p "Choice [a]: " sub || { echo ''; return 1; }
         case "${sub:-a}" in
             a|A)
                 # The deployment action ends with the same explicit subscription
@@ -167,6 +178,7 @@ case "$MODE" in
             echo "  A background relay is already installed, so Quick Start will"
             echo "  restart it and show its current QR instead of binding a second relay."
         fi
+        relay_record_connection_method "$ENV_FILE" "$MODE"
         exec "$SCRIPT_DIR/plugin-quick-start.sh"
         ;;
     stable)
@@ -179,12 +191,14 @@ case "$MODE" in
             exit 1
         fi
         if use_gateways "$COMMUNITY" latency; then
+            relay_record_connection_method "$ENV_FILE" "$MODE"
             exec "$SCRIPT_DIR/plugin-quick-start.sh"
         fi
         exit 1
         ;;
     own)
         if choose_own_gateway; then
+            relay_record_connection_method "$ENV_FILE" "$MODE"
             exec "$SCRIPT_DIR/plugin-quick-start.sh"
         fi
         exit 1

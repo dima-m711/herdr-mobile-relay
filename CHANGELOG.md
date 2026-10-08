@@ -5,6 +5,42 @@ project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+Private Tailscale changes rebased onto upstream `0.22.6`. The earlier `0.21.4`
+and `0.21.5` fork builds were local trial candidates. This entry does not
+announce a published or production-accepted fork release.
+
+### Added
+
+- Tailscale-first setup for new supported Linux installations, with explicit
+  runbook adoption, scoped route ownership, private pairing and guarded recovery.
+- A persistent private app origin shared by independently authenticated relays,
+  and verified private release staging, update cutover and rollback.
+
+### Changed
+
+- Release discovery and downloads use this fork. Existing explicit legacy
+  transports and macOS behavior remain available; upstream attribution and
+  licensing are retained.
+- Private relay startup and ordinary restart do not arm pairing invitations.
+  Existing phone credentials are preserved through supported lifecycle changes.
+
+### Fixed
+
+- Verify original runbook readiness using the upstream split between `/readyz`
+  and `/healthz`, retaining strict identity and process checks through adoption
+  and rollback; refuse adoption without a verified recovery receipt.
+- Validate initial adoption against the staged launcher before activation, then
+  verify the exact final unit after switching the pointer and before publication.
+- Read the packaged web hash from the release manifest rather than frontend
+  asset metadata, so readiness checks match real release bundles.
+- Bound agent-version probes, including inherited pipes and wrapper descendants.
+- Refuse consent-time identity replacement and standalone release activation
+  racing with private setup; fail packaging verification on intermediate errors.
+
+See [private Linux setup](docs/tailscale-linux.md) and the
+[acceptance evidence boundaries](docs/tailscale-acceptance.md). Real-device and
+live migration acceptance are separate from passing repository tests.
+
 ## [0.22.6] - 2026-10-02
 
 Version 0.22.5 was withdrawn; this release skips its version and asset generation.

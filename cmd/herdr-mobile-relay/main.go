@@ -158,6 +158,14 @@ func run(args []string) (int, error) {
 			return 2, errors.New("unknown pages-projects operation")
 		}
 		return 0, nil
+	case "tailscale-inspect":
+		return status(setuphelper.RunTailscaleInspection(args, os.Stdin, os.Stdout))
+	case "tailscale-pairing":
+		return status(setuphelper.RunTailscalePairing(args, os.Stdout))
+	case "tailscale-preflight":
+		return status(setuphelper.RunTailscalePreflight(args, os.Stdin, os.Stdout))
+	case "tailscale-state":
+		return status(setuphelper.RunTailscaleState(args, os.Stdin, os.Stdout))
 	case "stable-state":
 		if len(args) == 0 {
 			return 2, errors.New("stable-state requires an operation")
@@ -193,15 +201,19 @@ func run(args []string) (int, error) {
 		target := verifyFlags.String("target", release.CurrentTarget(), "expected os/architecture")
 		expectedVersion := verifyFlags.String("version", "", "expected release version")
 		expectedRevision := verifyFlags.String("revision", "", "expected release revision")
+		connectionMode := verifyFlags.String("connection-mode", "", "required managed connection mode")
 		allowCrossTarget := verifyFlags.Bool("allow-cross-target", false, "allow a build-host tool to verify another target")
 		if err := verifyFlags.Parse(args); err != nil {
 			return 2, err
 		}
-		if *allowCrossTarget && (*expectedVersion != "" || *expectedRevision != "") {
-			return 2, errors.New("--allow-cross-target cannot be combined with --version or --revision candidate checks")
+		if *connectionMode != "" && *connectionMode != config.ConnectionModeTailscale {
+			return 2, errors.New("unsupported required connection mode")
+		}
+		if *allowCrossTarget && (*expectedVersion != "" || *expectedRevision != "" || *connectionMode != "") {
+			return 2, errors.New("--allow-cross-target cannot be combined with --version, --revision or --connection-mode candidate checks")
 		}
 		if verifyFlags.NArg() > 1 {
-			return 2, errors.New("usage: herdr-mobile-relay verify-release [--target os/arch] [--version VERSION] [--revision REVISION] [--allow-cross-target] [DIRECTORY]")
+			return 2, errors.New("usage: herdr-mobile-relay verify-release [--target os/arch] [--version VERSION] [--revision REVISION] [--connection-mode tailscale] [--allow-cross-target] [DIRECTORY]")
 		}
 		root := ""
 		if verifyFlags.NArg() == 1 {
@@ -216,6 +228,11 @@ func run(args []string) (int, error) {
 		manifest, err := release.Verify(root, *target)
 		if err != nil {
 			return 1, err
+		}
+		if *connectionMode == config.ConnectionModeTailscale {
+			if err := release.ValidateTailscaleRelease(manifest); err != nil {
+				return 1, err
+			}
 		}
 		if err := verifyReleaseIdentity(manifest, *expectedVersion, *expectedRevision, *target, *allowCrossTarget); err != nil {
 			return 1, err

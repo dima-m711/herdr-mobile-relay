@@ -110,9 +110,13 @@ func TestVerifyReleaseIdentity(t *testing.T) {
 }
 
 func TestVerifyReleaseRejectsCrossTargetCandidateMode(t *testing.T) {
-	for _, candidateFlag := range []string{"--version", "--revision"} {
+	for _, candidateFlag := range []string{"--version", "--revision", "--connection-mode"} {
 		t.Run(candidateFlag, func(t *testing.T) {
-			code, err := run([]string{"verify-release", "--allow-cross-target", candidateFlag, "candidate"})
+			value := "candidate"
+			if candidateFlag == "--connection-mode" {
+				value = "tailscale"
+			}
+			code, err := run([]string{"verify-release", "--allow-cross-target", candidateFlag, value})
 			if code != 2 || err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 				t.Fatalf("run() = (%d, %v), want usage error", code, err)
 			}

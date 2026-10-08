@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -381,13 +382,36 @@ func TestListDirectories(t *testing.T) {
 
 func TestListSlashCommands(t *testing.T) {
 	for _, agent := range []string{"claude", "pi"} {
-		t.Run(agent, func(t *testing.T) { testListSlashCommands(t, agent) })
+		t.Run(agent, func(t *testing.T) { testListSlashCommands(t, agent, "") })
 	}
 }
 
-func testListSlashCommands(t *testing.T, agent string) {
-	scenario := fmt.Sprintf(`{"panes":[{"pane_id":"pane-1","terminal_id":"terminal-1","agent":%q,"name":"test","agent_status":"working","tab_id":"tab-1","workspace_id":"ws-1","cwd":"/tmp","revision":1,"foreground_cwd":"/tmp"}],"tabs":[{"tab_id":"tab-1","workspace_id":"ws-1","label":"main","number":1,"cwd":"/tmp"}]}`, agent)
-	env := setupEnvWithScenario(t, scenario)
+func TestListSlashCommandsWithSlowVersionWrapper(t *testing.T) {
+	sleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatal(err)
+	}
+	testListSlashCommands(t, "claude", fmt.Sprintf("(%q 6) &\nwait\n", sleep))
+}
+
+func testListSlashCommands(t *testing.T, agent, versionScript string) {
+	// Never probe installed agents or scan the developer's private skills.
+	root := t.TempDir()
+	binDir, home, project := filepath.Join(root, "bin"), filepath.Join(root, "home"), filepath.Join(root, "project")
+	for _, dir := range []string{binDir, home, filepath.Join(project, ".git")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if versionScript == "" {
+		versionScript = "printf 'fixture 1.2.3\\n'\n"
+	}
+	if err := os.WriteFile(filepath.Join(binDir, agent), []byte("#!/bin/sh\n[ \"$1\" = --version ] || exit 99\n"+versionScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	scenario := fmt.Sprintf(`{"panes":[{"pane_id":"pane-1","terminal_id":"terminal-1","agent":%q,"name":"test","agent_status":"working","tab_id":"tab-1","workspace_id":"ws-1","cwd":%q,"revision":1,"foreground_cwd":%q}],"tabs":[{"tab_id":"tab-1","workspace_id":"ws-1","label":"main","number":1,"cwd":%q}]}`, agent, project, project, project)
+	env := setupEnvWithScenario(t, scenario, "PATH="+binDir, "HOME="+home,
+		"CLAUDE_CONFIG_DIR=", "HERDR_CLAUDE_CONFIG_DIRS=", "PI_CODING_AGENT_DIR=", "HERDR_PI_CONFIG_DIRS=")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

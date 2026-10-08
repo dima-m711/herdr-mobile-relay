@@ -28,6 +28,9 @@ native_install_begin() {
     native_changed=false
     native_stage=""
     native_committed=false
+    native_recovery_command=false
+    native_skip_stop=false
+    native_keep_recovery="${native_keep_recovery:-false}"
     local recovery_root="${XDG_STATE_HOME:-$HOME/.local/state}/herdr-mobile-relay/recovery"
     mkdir -p "$recovery_root" || return 1
     chmod 700 "$recovery_root" || return 1
@@ -39,7 +42,7 @@ native_install_begin() {
     trap 'exit 143' TERM
     local index=0 file
     for file in "$native_definition" "$native_legacy_definition" "$native_environment"; do
-        if [ -e "$file" ] || [ -L "$file" ]; then
+        if [ -n "$file" ] && { [ -e "$file" ] || [ -L "$file" ]; }; then
             [ -f "$file" ] && [ ! -L "$file" ] || return 1
             cp -p "$file" "$native_recovery/$index" || return 1
         fi
@@ -49,12 +52,16 @@ native_install_begin() {
         systemctl --user show-environment >/dev/null || return 1
         native_active="$(native_systemd_state is-active "$native_label")" || return 1
         native_enabled="$(native_systemd_state is-enabled "$native_label")" || return 1
-        native_legacy_active="$(native_systemd_state is-active "$native_legacy_label")" || return 1
-        native_legacy_enabled="$(native_systemd_state is-enabled "$native_legacy_label")" || return 1
+        if [ -n "$native_legacy_label" ]; then
+            native_legacy_active="$(native_systemd_state is-active "$native_legacy_label")" || return 1
+            native_legacy_enabled="$(native_systemd_state is-enabled "$native_legacy_label")" || return 1
+        fi
     else
         launchctl print "gui/$UID" >/dev/null 2>&1 || return 1
         launchctl print "gui/$UID/$native_label" >/dev/null 2>&1 && native_active=true
-        launchctl print "gui/$UID/$native_legacy_label" >/dev/null 2>&1 && native_legacy_active=true
+        if [ -n "$native_legacy_label" ]; then
+            launchctl print "gui/$UID/$native_legacy_label" >/dev/null 2>&1 && native_legacy_active=true
+        fi
     fi
     printf 'definition=%s\nlegacy_definition=%s\nenvironment=%s\nactive=%s\nenabled=%s\nlegacy_active=%s\nlegacy_enabled=%s\n' \
         "$native_definition" "$native_legacy_definition" "$native_environment" \
@@ -68,8 +75,12 @@ native_install_begin() {
         local previous binary instance
         binary="$(relay_binary)" || return 1
         instance="$(env_file_value "$native_environment" HERDR_RELAY_INSTANCE_ID)"
-        if previous="$(curl -fsS --max-time 2 "http://127.0.0.1:$native_previous_port/readyz" 2>/dev/null)" &&
-           printf '%s\n' "$previous" | "$binary" verify-readiness "$instance" "" "" "" 2>/dev/null; then
+        if declare -F native_install_readiness_snapshot >/dev/null; then
+            previous="$(native_install_readiness_snapshot "$native_previous_port" "$instance")" || previous=''
+        else
+            previous="$(curl -fsS --max-time 2 "http://127.0.0.1:$native_previous_port/readyz" 2>/dev/null)" || previous=''
+        fi
+        if printf '%s\n' "$previous" | "$binary" verify-readiness "$instance" "" "" "" 2>/dev/null; then
             printf '%s\n' "$previous" > "$native_recovery/previous-ready.json"
             chmod 600 "$native_recovery/previous-ready.json"
             native_previous_ready=true
@@ -81,7 +92,13 @@ native_install_begin() {
 native_install_restore_files() {
     local index=0 file failed=false
     for file in "$native_definition" "$native_legacy_definition" "$native_environment"; do
-        if [ -f "$native_recovery/$index" ]; then
+        if [ -z "$file" ]; then
+            index=$((index + 1))
+            continue
+        fi
+        if [ -L "$file" ] || { [ -e "$file" ] && [ ! -f "$file" ]; } || [ -L "$native_recovery/$index" ]; then
+            failed=true
+        elif [ -f "$native_recovery/$index" ]; then
             cp -p "$native_recovery/$index" "$file" || failed=true
         else
             rm -f "$file" || failed=true
@@ -96,6 +113,7 @@ native_install_restore_activation() {
     if [ "$native_manager" = systemd ]; then
         systemctl --user daemon-reload || failed=true
         for label in "$native_label" "$native_legacy_label"; do
+            [ -n "$label" ] || continue
             active="$native_active"
             enabled="$native_enabled"
             if [ "$label" = "$native_legacy_label" ]; then
@@ -132,47 +150,76 @@ native_install_exit() {
         exit 1
     fi
     if [ "$native_committed" = true ]; then
-        rm -rf "$native_recovery"
+        if [ "$native_keep_recovery" != true ]; then rm -rf "$native_recovery"; fi
         exit "$result"
     fi
     set +e
-    if [ "$native_changed" = true ]; then
+    if declare -F native_install_pre_restore >/dev/null; then
+        native_install_pre_restore || failed=true
+    fi
+    local restore_allowed=true
+    if declare -F native_install_restore_allowed >/dev/null && ! native_install_restore_allowed; then
+        restore_allowed=false
+        failed=true
+    fi
+    if [ "$restore_allowed" = true ] && [ "$native_changed" = true ]; then
         if [ "$native_manager" = systemd ]; then
-            systemctl --user stop "$native_label" || failed=true
-            if [ "$native_enabled" = false ]; then systemctl --user disable "$native_label" || failed=true; fi
+            if [ "${native_skip_stop:-false}" != true ]; then
+                systemctl --user stop "$native_label" || failed=true
+                if [ "$native_enabled" = false ]; then systemctl --user disable "$native_label" || failed=true; fi
+            fi
         else
             if launchctl print "gui/$UID/$native_label" >/dev/null 2>&1; then
                 launchctl bootout "gui/$UID" "$native_definition" || failed=true
             fi
         fi
     fi
-    native_install_restore_files || failed=true
-    if [ "$native_changed" = true ]; then
+    if [ "$restore_allowed" = true ] && ! native_install_restore_files; then restore_allowed=false; failed=true; fi
+    if [ "$restore_allowed" = true ] && declare -F native_install_restore_release >/dev/null; then
+        if ! native_install_restore_release; then restore_allowed=false; failed=true; fi
+    fi
+    if [ "$restore_allowed" = true ] && [ "$native_changed" = true ]; then
         native_install_restore_activation || failed=true
         if [ "$native_active" = true ] || [ "$native_legacy_active" = true ]; then
             if [ "$native_previous_ready" = true ]; then
                 local previous
                 previous="$(cat "$native_recovery/previous-ready.json")"
-                wait_for_relay_release_health "$native_previous_port" 15 1 \
-                    "$(json_string_field "$previous" release_version)" "$(json_string_field "$previous" revision)" \
-                    "$(json_string_field "$previous" bundle_hash)" "$(json_string_field "$previous" instance)" >/dev/null || failed=true
+                if declare -F native_install_verify_previous_readiness >/dev/null; then
+                    native_install_verify_previous_readiness "$previous" || failed=true
+                else
+                    wait_for_relay_release_health "$native_previous_port" 15 1 \
+                        "$(json_string_field "$previous" release_version)" "$(json_string_field "$previous" revision)" \
+                        "$(json_string_field "$previous" bundle_hash)" "$(json_string_field "$previous" instance)" >/dev/null || failed=true
+                fi
             else
                 echo "Previous runtime readiness was unavailable; restored service identity cannot be confirmed." >&2
                 failed=true
             fi
         fi
     fi
+    if declare -F native_install_post_restore >/dev/null; then
+        native_install_post_restore "$failed" || failed=true
+    fi
     if [ "$failed" = true ]; then
         echo "Native installation rollback is incomplete. Private recovery files remain at $native_recovery; service state requires inspection." >&2
     else
-        rm -rf "$native_recovery"
+        if [ "$native_keep_recovery" = true ]; then
+            echo "Private recovery record retained at $native_recovery." >&2
+        else
+            rm -rf "$native_recovery"
+        fi
         echo "Native installation failed; previous files and activation were restored." >&2
     fi
+    if [ "${native_recovery_command:-false}" = true ] && [ "$failed" = false ]; then exit 0; fi
     [ "$result" -ne 0 ] || result=1
     exit "$result"
 }
 
 native_install_commit() {
+    if [ -z "$native_legacy_definition" ]; then
+        native_committed=true
+        return 0
+    fi
     if [ "$native_manager" = systemd ]; then
         if [ -f "$native_legacy_definition" ]; then
             systemctl --user disable --now "$native_legacy_label" || return 1

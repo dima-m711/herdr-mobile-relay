@@ -19,11 +19,12 @@ import (
 	"time"
 
 	"github.com/0cv/herdr-mobile-relay/internal/appdeploy"
+	"github.com/0cv/herdr-mobile-relay/internal/config"
 	relayrelease "github.com/0cv/herdr-mobile-relay/internal/release"
 )
 
 const (
-	canonicalReleaseAssets = "https://github.com/0cv/herdr-mobile-relay/releases/download"
+	canonicalReleaseAssets = relayrelease.Assets
 	maxChecksumBytes       = 1 * 1024 * 1024
 	maxArchiveBytes        = 128 * 1024 * 1024
 	maxExtractedBytes      = 256 * 1024 * 1024
@@ -47,6 +48,11 @@ func prepareTargetReleaseFrom(
 		return stagedRelease{}, fmt.Errorf("load current release: %w", err)
 	}
 
+	if job.ConnectionMode == config.ConnectionModeTailscale {
+		if err := relayrelease.ValidateTailscaleRelease(current); err != nil {
+			return stagedRelease{}, err
+		}
+	}
 	target := strings.ReplaceAll(relayrelease.CurrentTarget(), "/", "_")
 	archiveName := fmt.Sprintf("herdr-mobile-relay_%s_%s.tar.gz", job.TargetVersion, target)
 	base := strings.TrimRight(assetBase, "/") + "/v" + url.PathEscape(job.TargetVersion)

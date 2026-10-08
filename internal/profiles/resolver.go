@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/0cv/herdr-mobile-relay/internal/childenv"
@@ -381,7 +382,23 @@ func (r *Resolver) AgentVersion(profileID string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	cmd := childenv.CommandContext(ctx, profile.Argv[0], "--version")
+	// Version executables may be wrappers. Killing only the wrapper leaves
+	// children running and can keep CombinedOutput blocked on inherited pipes.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if err == syscall.ESRCH {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	// Backstop for a descendant that has escaped the original process group.
+	cmd.WaitDelay = 250 * time.Millisecond
 	output, err := cmd.CombinedOutput()
+	if cmd.Process != nil {
+		// Also clean up children when the wrapper exits before the deadline.
+		_ = cmd.Cancel()
+	}
 	version := ""
 	if err == nil {
 		version = semanticVersionPattern.FindString(string(output))

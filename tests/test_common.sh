@@ -1123,7 +1123,28 @@ START_BIN_DIR="$START_HOME/.local/bin"
 START_ENV="$WORK_DIR/config/start.env"
 START_SERVICE_LOG="$WORK_DIR/start-service.log"
 START_RELAY_LOG="$WORK_DIR/start-relay.log"
-mkdir -p "$START_SCRIPT_DIR" "$START_BIN_DIR"
+mkdir -p "$START_SCRIPT_DIR" "$START_BIN_DIR" "$START_HOME/.config/systemd/user"
+START_ROOT="$START_HOME/.local/share/herdr-mobile-relay/current"
+# Lifecycle control now requires a recognized definition as well as manager
+# activity; a bare successful is-active probe is not ownership evidence.
+cat > "$START_HOME/.config/systemd/user/herdr-mobile-relay.service" <<EOF
+[Unit]
+Description=Herdr Mobile Relay and Cloudflare tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$(systemd_quoted "$START_ROOT")
+Environment=$(systemd_quoted "HERDR_RELAY_ENV=$START_ENV")
+ExecStart=$(systemd_quoted "$START_ROOT/relay/herdr-mobile-relay-service.sh" exec)
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+EOF
+chmod 600 "$START_HOME/.config/systemd/user/herdr-mobile-relay.service"
 cp "$REPO_DIR/relay/common.sh" "$REPO_DIR/relay/start.sh" "$START_SCRIPT_DIR/"
 printf "HERDR_RELAY_TOKEN='start-token'\nHERDR_RELAY_INSTANCE_ID='start-instance'\n" \
     > "$START_ENV"
@@ -1140,6 +1161,9 @@ case "$*" in
     "--user restart herdr-mobile-relay.service")
         printf 'restarted\n' > "$START_SERVICE_LOG"
         ;;
+    '--user show herdr-mobile-relay.service --property FragmentPath --value')
+        printf '%s\n' "$HOME/.config/systemd/user/herdr-mobile-relay.service" ;;
+    '--user show herdr-mobile-relay.service --property DropInPaths --value') ;;
     *)
         exit 1
         ;;
@@ -1238,6 +1262,9 @@ test "$(printf '%s\n' "$STABLE_SWITCH_OUTPUT" |
 # report what exists before offering to change it: a stale phone app is exactly
 # the thing a person cannot otherwise see.
 MENU_BIN_DIR="$WORK_DIR/menu-bin"
+MENU_HOME="$WORK_DIR/menu-home"
+mkdir -p "$MENU_HOME/.local"
+ln -s "$MENU_BIN_DIR" "$MENU_HOME/.local/bin"
 MENU_ENV="$WORK_DIR/config/menu.env"
 MENU_ROOT="$WORK_DIR/menu-release"
 mkdir -p "$MENU_BIN_DIR" "$MENU_ROOT/current"
@@ -1255,13 +1282,14 @@ case "$*" in
     *) exit 22 ;;
 esac
 EOF
-chmod 700 "$MENU_BIN_DIR/curl"
+for manager in systemctl launchctl; do printf '#!/bin/sh\nexit 3\n' > "$MENU_BIN_DIR/$manager"; done
+chmod 700 "$MENU_BIN_DIR/"*
 # Entering an action and finishing it has to come back here, not end the pane:
 # 9 shows the status, then the menu is redrawn and q leaves. Without a terminal
 # the return prompt is skipped, so the input carries no extra newline.
 MENU_OUTPUT="$(
     printf '9\nq\n' |
-        PATH="$MENU_BIN_DIR:$PATH" \
+        HOME="$MENU_HOME" PATH="$MENU_BIN_DIR:$PATH" \
         HERDR_RELAY_BIN="$NORMALIZE_BIN" \
         HERDR_RELEASE_ROOT="$MENU_ROOT" \
         HERDR_RELAY_ENV="$MENU_ENV" \
@@ -1288,7 +1316,7 @@ case "$MENU_OUTPUT" in
     *) echo "setup menu did not report the stale phone app" >&2; exit 1 ;;
 esac
 case "$MENU_OUTPUT" in
-    *"Own gateway: gw-owned.example.test runs 9.9.8; plugin offers 9.9.10 - run herdr plugin install 0cv/herdr-mobile-relay, then redeploy with 3"*) ;;
+    *"Own gateway: gw-owned.example.test runs 9.9.8; plugin offers 9.9.10 - run herdr plugin install dima-m711/herdr-mobile-relay, then redeploy with 3"*) ;;
     *) echo "setup menu did not report how to update the stale self-hosted gateway" >&2; exit 1 ;;
 esac
 case "$MENU_OUTPUT" in
@@ -1338,7 +1366,7 @@ chmod 700 "$REFRESH_MENU_DIR/plugin-choose-transport.sh" \
 export REFRESH_MENU_MARKER
 printf '1\n9\nq\n' |
     HERDR_RELAY_BIN="$NORMALIZE_BIN" HERDR_RELAY_ENV="$REFRESH_MENU_ENV" \
-    bash "$REFRESH_MENU_DIR/plugin-setup-menu.sh" >/dev/null
+    HOME="$MENU_HOME" PATH="$MENU_BIN_DIR:$PATH" bash "$REFRESH_MENU_DIR/plugin-setup-menu.sh" >/dev/null
 test "$(cat "$REFRESH_MENU_MARKER")" = "unset"
 
 # A setup pane can outlive an in-place plugin update. Replacing its script
@@ -1356,7 +1384,7 @@ cp "$REPO_DIR/relay/common.sh" "$REPO_DIR/relay/plugin-setup-menu.sh" \
 mkfifo "$STALE_MENU_FIFO"
 exec 7<> "$STALE_MENU_FIFO"
 (
-    HERDR_RELAY_BIN="$NORMALIZE_BIN" HERDR_RELAY_ENV="$MENU_ENV" \
+    HOME="$MENU_HOME" PATH="$MENU_BIN_DIR:$PATH" HERDR_RELAY_BIN="$NORMALIZE_BIN" HERDR_RELAY_ENV="$MENU_ENV" \
         bash "$STALE_MENU_DIR/plugin-setup-menu.sh" <&7 \
         > "$STALE_MENU_OUTPUT" 2>&1
 ) &

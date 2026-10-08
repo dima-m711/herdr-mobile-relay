@@ -113,11 +113,25 @@ shell-check:
 	sh tests/test_download_credentials.sh
 	bash tests/test_service_credentials.sh
 	bash tests/test_common.sh
+	bash tests/test_tailscale_common.sh
+	bash tests/test_tailscale_service.sh
+	bash tests/test_tailscale_lock.sh
+	bash tests/test_tailscale_context.sh
+	bash tests/test_tailscale_native.sh
+	bash tests/test_tailscale_setup.sh
+	bash tests/test_tailscale_consent.sh
+	bash tests/test_tailscale_entrypoints.sh
+	bash tests/test_tailscale_defaults.sh
+	bash tests/test_tailscale_pairing.sh
+	bash tests/test_tailscale_update.sh
+	bash tests/test_tailscale_bootstrap.sh
 	bash tests/test_gateway_deploy.sh
 	bash tests/test_plugin_build.sh
 	sh tests/test_plugin_recovery.sh
 	bash tests/test_native_install.sh
 	sh tests/test_release_scripts.sh
+	sh tests/test_release_gate.sh
+	bash tests/test_private_release_stage.sh
 	bash tests/test_uninstall.sh
 	bash tests/test_speech_voices.sh
 	tests/test_stable_setup.sh
@@ -143,7 +157,7 @@ cross-build:
 	done
 
 release-bundle-check:
-	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
+	@set -eu; tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT; \
 	version="$$(sed -n 's/^version = "\([^"]*\)"/\1/p' herdr-plugin.toml)"; \
 	revision="$$(git rev-parse HEAD 2>/dev/null || echo test-revision)"; \
 	scripts/package-release.sh "$$version" "$$revision" "$$tmp"; \
