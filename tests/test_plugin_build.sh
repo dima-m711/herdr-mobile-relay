@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "$(uname -s)" != Linux ]; then echo 'Linux plugin migration fixtures skipped (native macOS matrix is separate)'; exit 0; fi
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/herdr-plugin-build-test.XXXXXX")"
-trap 'status=$?; rm -rf "$WORK_DIR"; exit $status' EXIT
+trap 'status=$?; if [ "$status" != 0 ]; then for log in "$WORK_DIR"/*output; do [ ! -f "$log" ] || tail -20 "$log" >&2; done; fi; rm -rf "$WORK_DIR"; exit $status' EXIT
 export HERDR_TEST_READINESS_BIN="$WORK_DIR/readiness-helper"
 go build -o "$HERDR_TEST_READINESS_BIN" "$REPO_DIR/cmd/herdr-mobile-relay"
 
@@ -100,6 +101,7 @@ set -eu
 printf '%s\n' "\$HERDR_PLUGIN_CONFIG_DIR" > "$CONFIG_RECORD"
 printf '%s\n' "\${GH_TOKEN:-}" > "$TOKEN_RECORD"
 printf '%s\n' "\${HERDR_RELEASE_REPOSITORY:-}" > "$REPO_RECORD"
+if flock -n "\$HERDR_PLUGIN_CONFIG_DIR/.setup.lock" -c true; then echo 'installer lost lifecycle lease' >&2; exit 99; fi
 [ "\${FAIL_INSTALLER:-}" != 1 ] || exit 1
 temp="\$INSTALL_ROOT/.current-install"
 rm -f "\$temp" "\$INSTALL_ROOT/current"
@@ -146,6 +148,7 @@ EOF
 cat > "$FAKE_BIN/herdr" <<'EOF'
 #!/bin/sh
 if [ "$*" = "plugin config-dir herdr-mobile-relay.events" ]; then
+    [ "${FAIL_CONFIG_DIR:-}" != 1 ] || exit 1
     printf '%s\n' "$TARGET_CONFIG"
     exit 0
 fi
@@ -191,7 +194,8 @@ if HOME="$TEST_HOME" \
     exit 1
 fi
 test ! -e "$RESTART_LOG"
-diff -qr "$WORK_DIR/target-before" "$TARGET_CONFIG" >/dev/null
+diff -qr -x .setup.lock "$WORK_DIR/target-before" "$TARGET_CONFIG" >/dev/null
+lock_identity="$(stat -c '%d:%i' "$TARGET_CONFIG/.setup.lock" 2>/dev/null || stat -f '%d:%i' "$TARGET_CONFIG/.setup.lock")"
 grep -F "previous running service was left untouched" "$WORK_DIR/pre-cutover-output" >/dev/null
 
 if HOME="$TEST_HOME" \
@@ -214,7 +218,8 @@ if grep -F 'persisted-private-token' "$WORK_DIR/output" >/dev/null; then
     echo "plugin tracing exposed the persisted credential" >&2
     exit 1
 fi
-diff -qr "$WORK_DIR/target-before" "$TARGET_CONFIG" >/dev/null
+diff -qr -x .setup.lock "$WORK_DIR/target-before" "$TARGET_CONFIG" >/dev/null
+test "$(stat -c '%d:%i' "$TARGET_CONFIG/.setup.lock" 2>/dev/null || stat -f '%d:%i' "$TARGET_CONFIG/.setup.lock")" = "$lock_identity"
 grep -F "previous service recovered successfully" "$WORK_DIR/output" >/dev/null
 
 rm -f "$RESTART_LOG"
@@ -405,6 +410,9 @@ test "$(cat "$FRESH_TOKEN_RECORD")" = "private-clone-api-token" ||
     { echo "a private checkout did not reuse the gh API credential" >&2; exit 1; }
 test "$(cat "$FRESH_REPO_RECORD")" = "0cv/herdr-mobile-relay-dev" ||
     { echo "a private checkout downloaded from the wrong release repository" >&2; exit 1; }
+test "$(cat "$FRESH_CONFIG/connection-method")" = unselected
+grep -Fx "root=$FRESH_CONFIG" "$FRESH_CONFIG/.herdr-mobile-relay-installation" >/dev/null
+printf 'community\n' > "$FRESH_CONFIG/connection-method"
 # The action is scheduled detached, so give it the moment it waits out.
 sleep 1
 grep -Fq 'plugin action invoke setup --plugin herdr-mobile-relay.events' "$SETUP_RECORD" ||
@@ -433,4 +441,18 @@ sleep 1
 grep -Fq 'plugin action invoke setup --plugin herdr-mobile-relay.events' "$SETUP_RECORD" ||
     { echo "a configured relay did not open the setup menu" >&2; exit 1; }
 
+test "$(cat "$FRESH_CONFIG/connection-method")" = community
+FRESH_CONFIG="$FRESH_HOME/personal-config"
+mkdir -p "$FRESH_CONFIG"
+printf 'keep this\n' > "$FRESH_CONFIG/personal.txt"
+run_fresh_build env HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1
+test ! -e "$FRESH_CONFIG/.herdr-mobile-relay-installation"
+test "$(cat "$FRESH_CONFIG/personal.txt")" = 'keep this'
+FRESH_CONFIG="$FRESH_HOME/missing-identity"
+mkdir -p "$FRESH_CONFIG/device-auth"
+printf 'paired phone\n' > "$FRESH_CONFIG/device-auth/keep"
+if run_fresh_build env HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1; then echo 'orphan device state replaced with new identity' >&2; exit 1; fi
+test ! -e "$FRESH_CONFIG/relay.env"
+run_fresh_build env -u HERDR_PLUGIN_CONFIG_DIR FAIL_CONFIG_DIR=1 HERDR_MOBILE_RELAY_NO_AUTO_SETUP=1
+test "$(cat "$FRESH_HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/connection-method")" = unselected
 echo "plugin build migration, rollback, and recovery tests passed"

@@ -6,6 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+if [ "$CONNECTION_MODE" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-pair.sh" --choose-app; fi
 SERVICE_ENV="$(installed_service_env_file)"
 if [ -n "$SERVICE_ENV" ]; then
     export HERDR_RELAY_ENV="$SERVICE_ENV"

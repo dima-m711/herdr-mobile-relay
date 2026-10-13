@@ -12,8 +12,6 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:$HO
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
-ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
-
 require_supported_platform
 
 case "${1:-}" in
@@ -26,6 +24,12 @@ case "${1:-}" in
         exit 2
         ;;
 esac
+
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+DEFAULT_SETUP="$(relay_default_setup "$ENV_FILE")"
+if [ "$DEFAULT_SETUP" = tailscale ]; then exec bash "$SCRIPT_DIR/tailscale-setup.sh"; fi
+relay_require_legacy_transport "$ENV_FILE"
+ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 
 cleanup() {
     if [ -n "$CLOUDFLARED_TEMP_DIR" ] && [ -d "$CLOUDFLARED_TEMP_DIR" ]; then

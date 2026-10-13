@@ -1,21 +1,31 @@
 # How your phone reaches your computer
 
-Three transports can carry traffic between your phone and a relay: a Cloudflare
-tunnel, the community gateway, or a gateway you run yourself. All three are
-end-to-end encrypted. Only the two gateway choices then try to leave the
+This fork defaults new supported Linux installations to **private Tailscale
+HTTPS/WSS**. It carries the existing encrypted relay protocol, not a new wire
+protocol. See [private Linux setup](tailscale-linux.md) for release availability,
+prerequisites, shared app origins, and explicit adoption of existing runbooks.
+No gateway, public tunnel, port mapping, Funnel or automatic fallback is enabled.
+
+Three explicit alternatives remain: a Cloudflare tunnel, the community gateway,
+or a gateway you run yourself. All choices are end-to-end encrypted. Only the two gateway choices then try to leave the
 transport behind: phone and computer negotiate a direct peer-to-peer connection
 and the gateway is left carrying the fallback. Cloudflare tunnel traffic always
 goes through Cloudflare.
 
-## The three choices
+## Choosing a path
 
 | Choice | What it needs from you | Who carries the traffic | When to pick it |
 | --- | --- | --- | --- |
-| **Cloudflare tunnel** | Nothing for Quick Start's temporary URL; a Cloudflare account with a domain for a permanent hostname and background service. | Cloudflare's edge | The default. See [cloudflare-tunnel.md](cloudflare-tunnel.md) for the permanent hostname. |
+| **Tailscale (Linux default)** | Separately connected Tailscale on phone/computers, supported systemd user session and a private app host. | Your tailnet, using Serve to the loopback relay | Private access; see [tailscale-linux.md](tailscale-linux.md). |
+| **Cloudflare tunnel** | Nothing for Quick Start's temporary URL; a Cloudflare account with a domain for a permanent hostname and background service. | Cloudflare's edge | Explicit alternative; existing legacy/macOS intent is retained. See [cloudflare-tunnel.md](cloudflare-tunnel.md) for the permanent hostname. |
 | **Community gateway** | No account and no domain, but the phone app must already be hosted somewhere — a gateway serves no app. | A gateway operated by the project, until the direct path forms | Free, shared, best-effort; not for heavy transfers. Pick it to avoid Cloudflare setup entirely. |
 | **Your own gateway** | A small VPS with Docker and a public hostname. | Your own gateway, until the direct path forms | Dedicated bandwidth, and the transport logs stay on your machine. See [gateway-self-hosting.md](gateway-self-hosting.md). |
 
-Pick **Temporary Cloudflare Tunnel**, **Community WebRTC Gateway**, **Deploy or
+Private installations must complete approved teardown and explicit transport
+departure before selecting a legacy path; do not edit gateway settings beneath
+the private service. Adopted routes and device credentials are retained.
+
+For an alternative, pick **Temporary Cloudflare Tunnel**, **Community WebRTC Gateway**, **Deploy or
 Upgrade Your Own WebRTC Gateway**, or **Stable Tunnel** directly from the setup
 menu. A completed choice is recorded, starts or restarts the relay, and prints
 the phone QR; there is no second Quick Start step.
@@ -54,7 +64,7 @@ re-pairing.
 
 Phone **Settings** names what each relay is using right now: `gateway <host>`
 while relayed, `direct, via <host>` once the upgrade takes over, or
-`relay URL <host>` on a Cloudflare tunnel or LAN address.
+`relay URL <host>` on Tailscale, a Cloudflare tunnel or a LAN address.
 
 The gateway also answers address discovery on UDP 3478. That is what lets a phone
 on a cellular network reach a home computer with no port forwarding and no router
@@ -70,6 +80,12 @@ unsolicited packets are dropped by the ICE agent, and the end-to-end handshake
 remains the only authorization for control on every path.
 
 ## Relay settings
+
+The defaults below describe legacy modes. Private mode explicitly requires
+`HERDR_CONNECTION_MODE=tailscale`, loopback binding, an empty gateway list,
+`HERDR_REACHABILITY_PORT_MAPPING=0`, `HERDR_TRANSPORT_FORCE_RELAY=1` and disabled
+bootstrap reset. Setup writes and validates these together; an empty gateway
+list alone does not select Tailscale.
 
 - `HERDR_GATEWAY_URL` — one or more gateway base URLs, separated by commas
   (`wss://gw.example.com,wss://backup.example.com`). Empty, the default, keeps the

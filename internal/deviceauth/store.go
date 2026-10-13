@@ -115,14 +115,21 @@ func WithBootstrapReenrollment() Option {
 	return func(store *Store) { store.rearmBootstrap = true }
 }
 
+// WithExplicitBootstrapInvitation disables startup arming and expiry renewal.
+// Private mode requires an operator-requested, verified invitation display.
+func WithExplicitBootstrapInvitation() Option {
+	return func(store *Store) { store.explicitBootstrap = true }
+}
+
 type Store struct {
-	mu             sync.Mutex
-	dir            string
-	path           string
-	now            func() time.Time
-	random         io.Reader
-	rearmBootstrap bool
-	state          diskState
+	mu                sync.Mutex
+	dir               string
+	path              string
+	now               func() time.Time
+	random            io.Reader
+	rearmBootstrap    bool
+	explicitBootstrap bool
+	state             diskState
 }
 
 func Open(dir string, options ...Option) (*Store, error) {
@@ -198,7 +205,7 @@ func (s *Store) EnsureBootstrapInvitation(secret []byte, name, locale string) er
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.state.Credentials) > 0 && !s.rearmBootstrap {
+	if s.explicitBootstrap || (len(s.state.Credentials) > 0 && !s.rearmBootstrap) {
 		return nil
 	}
 	now := s.now().UTC()

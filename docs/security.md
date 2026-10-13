@@ -4,6 +4,28 @@ What the relay exposes at runtime, what is encrypted end to end, what a
 transport intermediary can still observe, and what the audit log records. Read
 this before exposing a relay beyond your own machine.
 
+## Private Linux mode
+
+[Tailscale-first setup](tailscale-linux.md) uses private Serve HTTPS/WSS to the
+loopback relay and keeps the existing per-device encrypted authentication.
+Tailnet membership and proxy headers are not application credentials. Setup
+never enables Funnel, gateway fallback or router port mapping, and does not
+change Tailscale enrollment, ACLs or operator permissions. The app origin can
+belong to a different private computer; relays still authenticate independently.
+
+Private pairing requires an attached terminal, verified process/listener identity
+and a fresh persisted invitation acknowledgment before rendering. Startup and
+ordinary restart do not arm invitations; unused invitations expire after ten
+minutes, even before the first phone enrolls, with no automatic renewal.
+Explicit local pairing can arm another without replacing enrolled credentials.
+Keep invitation fragments and recovery files out of logs, screenshots and support
+requests. Recovery evidence can contain secrets and must not be sourced.
+
+Private transport does not imply all traffic stays in the tailnet: release checks
+and downloads contact GitHub, optional browser push uses platform push services,
+and Tailscale HTTPS certificates may disclose hostnames in certificate transparency.
+Trusted app code and the security of the app-host computer remain prerequisites.
+
 ## Ports and exposed surface
 
 The relay binds to `127.0.0.1:8375` by default (`HERDR_RELAY_HOST`,
@@ -86,7 +108,8 @@ push delivery and revoke its own credential. Only a controller may register
 the app origin used for notification links. Revocation closes the device's
 live clients, enrollment tickets, and push subscriptions.
 
-The bootstrap invitation is one-use on stable installs. Its ten-minute window
+In legacy modes, the bootstrap invitation is one-use on stable installs (the
+stricter private-mode expiry is described above). Its ten-minute window
 is measured from each presentation while no device has enrolled yet — a relay
 with no paired phone would otherwise be unpairable ten minutes after start,
 with no way in — so the first successful enrolment, not the clock, is what

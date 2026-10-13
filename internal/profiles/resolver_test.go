@@ -1,10 +1,12 @@
 package profiles
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDefaultCandidatesFiltered(t *testing.T) {
@@ -67,6 +69,55 @@ func TestAgentVersionUsesResolvedProfileExecutable(t *testing.T) {
 	resolver := NewResolver(t.TempDir(), nil)
 	if version := resolver.AgentVersion("codex"); version != "1.2.3" {
 		t.Fatalf("AgentVersion(codex) = %q, want 1.2.3", version)
+	}
+}
+
+func TestAgentVersionBoundsWrapperChildren(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		detached, exitEarly bool
+	}{
+		{name: "inherited pipes"},
+		{name: "detached pipes", detached: true},
+		{name: "wrapper exits first", exitEarly: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			marker := filepath.Join(binDir, "survived")
+			sleep, err := exec.LookPath("sleep")
+			if err != nil {
+				t.Fatal(err)
+			}
+			redirect := ""
+			if tc.detached {
+				redirect = " >/dev/null 2>&1"
+			}
+			wait := "wait\n"
+			if tc.exitEarly {
+				wait = "exit 0\n"
+			}
+			// The child must neither hold the probe open nor survive cancellation.
+			body := fmt.Sprintf("#!/bin/sh\n(%q 4; echo survived > %q)%s &\n%s", sleep, marker, redirect, wait)
+			if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(body), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", binDir)
+			resolver := NewResolver(t.TempDir(), nil)
+			started := time.Now()
+			if version := resolver.AgentVersion("claude"); version != "" {
+				t.Fatalf("unexpected version %q", version)
+			}
+			elapsed := time.Since(started)
+			if elapsed > 3*time.Second {
+				t.Errorf("version probe exceeded its 2s deadline: %s", elapsed)
+			}
+			if remaining := 4500*time.Millisecond - time.Since(started); remaining > 0 {
+				time.Sleep(remaining)
+			}
+			if _, err := os.Stat(marker); !os.IsNotExist(err) {
+				t.Errorf("wrapper child survived cancellation: stat error %v", err)
+			}
+		})
 	}
 }
 

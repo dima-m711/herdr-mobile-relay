@@ -22,6 +22,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+relay_require_legacy_transport "$ENV_FILE"
+export HERDR_LEGACY_SETUP=1
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 # Answers from the last run, kept beside the relay environment like the recorded
 # phone app origin. Rerunning to redeploy should not re-type a hostname, an SSH

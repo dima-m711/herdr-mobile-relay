@@ -10,6 +10,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
+ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE" migration)"
+[ "$CONNECTION_MODE" != tailscale ] || { echo 'Private configuration cannot run through the Cloudflare launcher.' >&2; exit 78; }
+relay_drop_setup_lock "$(dirname "$ENV_FILE")"
 ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
 
 if [ -f "$ENV_FILE" ]; then

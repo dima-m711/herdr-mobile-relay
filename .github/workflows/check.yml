@@ -2,7 +2,8 @@ name: check
 
 on:
   push:
-    branches: [main, dev]
+    # Check the exact fork candidate SHA without depending on PR event processing.
+    branches: [main, dev, feat/tailscale-first-linux]
   pull_request:
 
 jobs:

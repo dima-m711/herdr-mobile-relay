@@ -6,8 +6,20 @@ cd "$SCRIPT_DIR"
 # shellcheck source=common.sh
 . "$SCRIPT_DIR/common.sh"
 
-ENV_FILE="$(relay_env_file "$SCRIPT_DIR")"
-load_relay_env "$ENV_FILE"
+refresh_environment() {
+    ENV_FILE="$(relay_env_path "$SCRIPT_DIR")"
+    CONNECTION_MODE="$(relay_connection_mode "$ENV_FILE")"
+    DEFAULT_SETUP="$(relay_default_setup "$ENV_FILE")"
+    DEFAULT_CHOICE=1
+    if [ "$(uname -s)" = Linux ]; then
+        DEFAULT_CHOICE=q
+        [ "$DEFAULT_SETUP" != tailscale ] || DEFAULT_CHOICE=0
+    fi
+    # A private or fresh menu never sources credentials or probes public
+    # gateways/app hosts simply to render. Detailed diagnostics are explicit.
+    if [ "$CONNECTION_MODE" != tailscale ] && [ "$DEFAULT_SETUP" != tailscale ]; then load_relay_env "$ENV_FILE"; fi
+}
+refresh_environment
 
 # The menu opens after every install, so it has to answer "what do I have" before
 # it asks "what next". Every probe is bounded and optional: a status line that
@@ -38,7 +50,7 @@ own_gateway_summary() {
     host="$(env_file_value "$state_file" HERDR_GATEWAY_DEPLOY_HOST)"
     [ -n "$host" ] || return 0
     if [ -n "$available" ] && [ -n "$installed" ] && [ "$available" != "$installed" ]; then
-        action="run herdr plugin install 0cv/herdr-mobile-relay, then redeploy with 3"
+        action="run herdr plugin install dima-m711/herdr-mobile-relay, then redeploy with 3"
     fi
     if ! health="$(curl -fsS --max-time 3 "https://$host/healthz" 2>/dev/null)"; then
         printf '%s is unreachable, version unknown' "$host"
@@ -127,6 +139,14 @@ transport_summary() {
 print_status() {
     local installed running health available service app_origin deployed own_gateway
 
+    if [ "$CONNECTION_MODE" = tailscale ]; then
+        echo '  Phone path: Tailscale only (no public fallback)'
+        echo '  Use 9 to verify local readiness and private HTTPS; phone login is a separate check.'
+        return
+    elif [ "$DEFAULT_SETUP" = tailscale ]; then
+        echo '  Phone path: not configured — Tailscale is the Linux default.'
+        return
+    fi
     installed="$(installed_release_version || true)"
     health="$(running_health || true)"
     running="$(json_string_field "$health" release_version)"
@@ -171,6 +191,16 @@ render_menu() {
     echo ""
     echo "Connection"
     echo ""
+    if [ "$(uname -s)" = Linux ]; then
+        menu_item 0 'Tailscale Private Setup (recommended)'
+        echo '     Requires your already-connected Tailscale; no enrollment or public fallback.'
+        menu_item a 'Adopt Recognized Tailscale Runbook Installation'
+        menu_item p 'Start or Restart Managed Tailscale Service'
+        menu_item r 'Recover Interrupted Tailscale Setup'
+        menu_item t 'Teardown Tailscale Service (retain credentials and pairings)'
+        echo '     Linger is never enabled automatically. Existing alternatives are opt-in.'
+        echo ''
+    fi
     menu_item 1 "Temporary Cloudflare Tunnel"
     echo "     Start a foreground relay and temporary URL, then print its QR."
     echo "     An installed background relay is restarted instead of duplicated."
@@ -227,8 +257,8 @@ run_action() {
         cd "$SCRIPT_DIR"
         HERDR_SETUP_MENU=1 "$action" "$@"
     ) || true
-    unset HERDR_GATEWAY_URL HERDR_GATEWAY_SELECTION
-    load_relay_env "$ENV_FILE"
+    unset HERDR_GATEWAY_URL HERDR_GATEWAY_SELECTION HERDR_CONNECTION_MODE HERDR_RELAY_SERVICE_NAME HERDR_RELAY_TOKEN
+    refresh_environment
     trap - INT
     if [ -t 0 ]; then
         echo ""
@@ -239,11 +269,21 @@ run_action() {
 while true; do
     render_menu
     while true; do
-        if ! read -r -p "Choice [1]: " choice; then
+        if ! read -r -p "Choice [$DEFAULT_CHOICE]: " choice; then
             echo ""
             exit 0
         fi
-        case "${choice:-1}" in
+        case "${choice:-$DEFAULT_CHOICE}" in
+            0|a|p|r|t)
+                if [ "$(uname -s)" != Linux ]; then echo 'Tailscale service setup currently requires Linux.'; continue; fi
+                case "$choice" in
+                    a) run_action "$SCRIPT_DIR/tailscale-setup.sh" --adopt-runbook ;;
+                    p) run_action "$SCRIPT_DIR/tailscale-control.sh" restart ;;
+                    r) run_action "$SCRIPT_DIR/tailscale-setup.sh" --recover ;;
+                    t) run_action "$SCRIPT_DIR/tailscale-teardown.sh" ;;
+                    *) run_action "$SCRIPT_DIR/tailscale-setup.sh" ;;
+                esac
+                break ;;
             1) run_action "$SCRIPT_DIR/plugin-choose-transport.sh" temporary; break ;;
             2) run_action "$SCRIPT_DIR/plugin-choose-transport.sh" community; break ;;
             3) run_action "$SCRIPT_DIR/plugin-choose-transport.sh" own; break ;;
@@ -254,7 +294,7 @@ while true; do
             8) run_action "$SCRIPT_DIR/plugin-configure-app-deploy.sh"; break ;;
             9) run_action "$SCRIPT_DIR/plugin-status.sh"; break ;;
             q | Q) exit 0 ;;
-            *) echo "Enter 1, 2, 3, 4, 5, 6, 7, 8, 9, or q." ;;
+            *) echo 'Choose a displayed action, or q to leave unchanged.' ;;
         esac
     done
 done

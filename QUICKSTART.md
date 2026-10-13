@@ -1,5 +1,7 @@
 # Herdr Mobile Relay Quick Start
 
+For this fork's **private Linux default**, follow [Tailscale setup and runbook adoption](docs/tailscale-linux.md). That guide also explains fork release availability and shared app origins. The instructions below are for explicitly chosen legacy transports and existing macOS behavior; they are not a fallback when private setup fails.
+
 Connect one Linux or macOS computer to your phone through a temporary Cloudflare
 tunnel, or through a gateway that needs no Cloudflare account (see **Skip
 Cloudflare**). You need Herdr 0.7.5 or newer, Git, and `curl`. Herdr 0.9.0 is
@@ -13,7 +15,7 @@ rather than treating the whole connection as unavailable.
 ## 1. Install
 
 ```bash
-herdr plugin install 0cv/herdr-mobile-relay
+herdr plugin install dima-m711/herdr-mobile-relay
 ```
 
 Choose **Temporary Cloudflare Tunnel** when the setup menu opens. If it does

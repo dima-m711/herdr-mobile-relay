@@ -129,8 +129,16 @@ mkdir -p "$STUB_BIN"
 printf '#!/bin/sh\nexit 0\n' > "$STUB_BIN/launchctl"
 chmod 700 "$STUB_BIN/launchctl"
 
-PORT=$((40000 + ($$ % 20000)))
-PLUGIN_PORT=$((PORT + 1))
+# Ask the kernel for disposable candidates instead of guessing from $$ (which
+# collides with concurrent tests). Python is a development-check dependency,
+# not part of the installed relay. Sockets close immediately before startup.
+PORTS=$(python3 -c 'import socket
+with socket.socket() as tcp, socket.socket(type=socket.SOCK_DGRAM) as udp:
+    tcp.bind(("127.0.0.1", 0))
+    udp.bind(("127.0.0.1", 0))
+    print(tcp.getsockname()[1], udp.getsockname()[1])')
+PORT=${PORTS% *}
+PLUGIN_PORT=${PORTS#* }
 PATH="$STUB_BIN:$PATH" \
 XDG_CONFIG_HOME="$CONFIG_HOME" \
 XDG_CACHE_HOME="$CACHE_HOME" \
@@ -138,6 +146,9 @@ XDG_DATA_HOME="$DATA_HOME" \
 HERDR_RELAY_PORT="$PORT" \
 HERDR_RELAY_PLUGIN_PORT="$PLUGIN_PORT" \
 HERDR_RELAY_HOST=127.0.0.1 \
+HERDR_GATEWAY_URL= \
+HERDR_REACHABILITY_PORT_MAPPING=0 \
+HERDR_TRANSPORT_FORCE_RELAY=1 \
 HERDR_RELAY_TOKEN= \
 HERDR_BIN=/bin/false \
 HERDR_WEB_ROOT="$RELEASE_DIR/web" \
