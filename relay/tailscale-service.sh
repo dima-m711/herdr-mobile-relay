@@ -30,8 +30,22 @@ if [ "${HERDR_CONNECTION_MODE:-}" != tailscale ]; then
 fi
 
 relay_drop_setup_lock "$(dirname "$ENV_FILE")"
-export HERDR_RELAY_SERVICE_NAME=herdr-mobile-relay-tailscale.service
-export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+case "$(uname -s)" in
+    Darwin)
+        export HERDR_RELAY_SERVICE_NAME=com.herdr-mobile-relay.tailscale
+        # launchd has no journal. Keep runtime diagnostics in the private config
+        # directory; invitations are never rendered by this launcher.
+        LOG_FILE="$(dirname "$ENV_FILE")/tailscale-relay.log"
+        if [ ! -e "$LOG_FILE" ] && [ ! -L "$LOG_FILE" ]; then (umask 077; set -C; : > "$LOG_FILE") || exit 78; fi
+        private_owned_file "$LOG_FILE" || exit 78
+        exec 9>>"$LOG_FILE"
+        "$RELAY_BIN" tailscale-platform check-fd 9 "$LOG_FILE" || exit 78
+        exec 1>&9 2>&9 9>&-
+        ;;
+    Linux) export HERDR_RELAY_SERVICE_NAME=herdr-mobile-relay-tailscale.service ;;
+    *) exit 78 ;;
+esac
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 # The runtime validates the private transport policy. Do not silently repair
 # unsafe settings, rotate keys, regenerate an instance, or rearm bootstrap.
 exec "$RELAY_BIN" serve

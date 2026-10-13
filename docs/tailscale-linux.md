@@ -1,6 +1,6 @@
 # Private Linux setup in this fork
 
-This fork is **Tailscale-first, not Tailscale-only**. Existing explicit gateway/Cloudflare configurations and macOS behavior remain alternatives. It retains upstream Herdr Mobile Relay attribution and AGPL-3.0-or-later licensing.
+This fork is **Tailscale-first, not Tailscale-only**. Existing explicit gateway/Cloudflare configurations remain alternatives. macOS retains its existing defaults and adds [explicit managed Tailscale setup](tailscale-macos.md). It retains upstream Herdr Mobile Relay attribution and AGPL-3.0-or-later licensing.
 
 ## Availability and prerequisites
 

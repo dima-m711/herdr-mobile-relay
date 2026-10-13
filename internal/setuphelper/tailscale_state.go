@@ -211,7 +211,7 @@ func (s TailscaleSetupState) validate() error {
 			return errors.New("invalid path in Tailscale state")
 		}
 	}
-	if filepath.Base(s.Unit) != "herdr-mobile-relay-tailscale.service" || filepath.Base(s.Environment) != "relay.env" {
+	if (filepath.Base(s.Unit) != "herdr-mobile-relay-tailscale.service" && filepath.Base(s.Unit) != "com.herdr-mobile-relay.tailscale.plist") || filepath.Base(s.Environment) != "relay.env" {
 		return errors.New("unrecognized Tailscale service identity")
 	}
 	if len(s.Instance) == 0 || len(s.Instance) > 128 || strings.IndexFunc(s.Instance, func(c rune) bool {

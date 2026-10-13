@@ -244,7 +244,7 @@ func Build(root, version, revision, target string) (Manifest, error) {
 		Files: files,
 	}
 	manifest.Repository = Repository
-	if (manifest.Target == "linux/amd64" || manifest.Target == "linux/arm64") && hasTailscaleHelpers(manifest) {
+	if tailscaleTarget(manifest.Target) && hasTailscaleHelpers(manifest) {
 		manifest.TailscaleSetup = TailscaleSetupVersion
 	}
 	manifest.WebHash = hashFileMap(files, "web/")

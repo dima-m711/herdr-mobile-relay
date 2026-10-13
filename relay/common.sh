@@ -119,7 +119,7 @@ relay_env_path() {
     local service_env
     if [ -n "${HERDR_RELAY_ENV:-}" ]; then printf '%s\n' "$HERDR_RELAY_ENV"
     elif [ -n "${HERDR_PLUGIN_CONFIG_DIR:-}" ]; then printf '%s/relay.env\n' "$HERDR_PLUGIN_CONFIG_DIR"
-    elif [ -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] || [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] || [ -e "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/tailscale-setup.json" ]; then
+    elif [ -e "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] || [ -L "$HOME/.config/systemd/user/herdr-mobile-relay-tailscale.service" ] || [ -e "$HOME/Library/LaunchAgents/com.herdr-mobile-relay.tailscale.plist" ] || [ -L "$HOME/Library/LaunchAgents/com.herdr-mobile-relay.tailscale.plist" ] || [ -e "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/tailscale-setup.json" ]; then
         printf '%s\n' "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/relay.env"
     else
         service_env="$(installed_service_env_file)" || return 1
@@ -394,7 +394,7 @@ relay_routing_setting() {
         case "$raw" in \'*\'|\"*\") raw="${raw:1:${#raw}-2}" ;; esac
     done < "$file"
     case "$key:$raw" in
-        HERDR_CONNECTION_MODE:|HERDR_CONNECTION_MODE:tailscale|HERDR_RELAY_SERVICE_NAME:|HERDR_RELAY_SERVICE_NAME:herdr-mobile-relay.service|HERDR_RELAY_SERVICE_NAME:herdr-remote.service|HERDR_RELAY_SERVICE_NAME:herdr-mobile-relay-tailscale.service|HERDR_RELAY_SERVICE_NAME:com.herdr-mobile-relay.service|HERDR_RELAY_SERVICE_NAME:com.herdr-remote.service) printf '%s\n' "$raw" ;;
+        HERDR_CONNECTION_MODE:|HERDR_CONNECTION_MODE:tailscale|HERDR_RELAY_SERVICE_NAME:|HERDR_RELAY_SERVICE_NAME:herdr-mobile-relay.service|HERDR_RELAY_SERVICE_NAME:herdr-remote.service|HERDR_RELAY_SERVICE_NAME:herdr-mobile-relay-tailscale.service|HERDR_RELAY_SERVICE_NAME:com.herdr-mobile-relay.service|HERDR_RELAY_SERVICE_NAME:com.herdr-remote.service|HERDR_RELAY_SERVICE_NAME:com.herdr-mobile-relay.tailscale) printf '%s\n' "$raw" ;;
         *) echo 'Unknown relay mode or service setting; refusing automatic routing.' >&2; return 1 ;;
     esac
 }
@@ -412,6 +412,21 @@ linux_relay_service_label() {
         echo 'Configured service name differs from the installed definition.' >&2; return 1
     fi
     printf '%s\n' "${selected:-${HERDR_RELAY_SERVICE_NAME:-herdr-mobile-relay.service}}"
+}
+
+darwin_relay_service_label() {
+    local candidate selected='' count=0
+    case "${HERDR_RELAY_SERVICE_NAME:-}" in ''|com.herdr-mobile-relay.service|com.herdr-remote.service|com.herdr-mobile-relay.tailscale) ;; *) echo 'Unrecognized macOS relay service name.' >&2; return 1 ;; esac
+    for candidate in com.herdr-mobile-relay.service com.herdr-remote.service com.herdr-mobile-relay.tailscale; do
+        if [ -e "$HOME/Library/LaunchAgents/$candidate.plist" ] || [ -L "$HOME/Library/LaunchAgents/$candidate.plist" ]; then
+            selected="$candidate"; count=$((count + 1))
+        fi
+    done
+    [ "$count" -le 1 ] || { echo 'Multiple macOS relay services exist; review the conflict explicitly.' >&2; return 1; }
+    if [ -n "$selected" ] && [ -n "${HERDR_RELAY_SERVICE_NAME:-}" ] && [ "$selected" != "$HERDR_RELAY_SERVICE_NAME" ]; then
+        echo 'Configured macOS service name differs from the installed definition.' >&2; return 1
+    fi
+    printf '%s\n' "${selected:-${HERDR_RELAY_SERVICE_NAME:-com.herdr-mobile-relay.service}}"
 }
 
 assert_linux_relay_unit() {
@@ -458,7 +473,17 @@ relay_connection_mode() {
             [ -z "$name" ] || [ "$name" = "$label" ] || { echo 'Stored service identity conflicts with the selected unit.' >&2; return 1; }
         fi
     fi
-    if [ "$mode" = tailscale ] || [ "${HERDR_CONNECTION_MODE:-}" = tailscale ] || [ "$label" = herdr-mobile-relay-tailscale.service ]; then printf 'tailscale\n'; return 0; fi
+    if [ "$(uname -s)" = Darwin ]; then
+        case "$name" in ''|com.herdr-mobile-relay.service|com.herdr-remote.service|com.herdr-mobile-relay.tailscale) ;; *) echo 'Service setting belongs to another platform.' >&2; return 1 ;; esac
+        if [ "${2:-}" = migration ] && [ ! -e "$HOME/Library/LaunchAgents/com.herdr-mobile-relay.tailscale.plist" ] && [ ! -L "$HOME/Library/LaunchAgents/com.herdr-mobile-relay.tailscale.plist" ]; then
+            case "${HERDR_RELAY_SERVICE_NAME:-}" in ''|com.herdr-mobile-relay.service|com.herdr-remote.service) ;; *) return 1 ;; esac
+            label="$name"
+        else label="$(darwin_relay_service_label)" || return 1; fi
+        if [ -e "$HOME/Library/LaunchAgents/$label.plist" ] || [ -L "$HOME/Library/LaunchAgents/$label.plist" ]; then
+            [ -z "$name" ] || [ "$name" = "$label" ] || { echo 'Stored service identity conflicts with the macOS definition.' >&2; return 1; }
+        fi
+    fi
+    if [ "$mode" = tailscale ] || [ "${HERDR_CONNECTION_MODE:-}" = tailscale ] || [ "$label" = herdr-mobile-relay-tailscale.service ] || [ "$label" = com.herdr-mobile-relay.tailscale ]; then printf 'tailscale\n'; return 0; fi
     for state in "$(dirname "$file")/tailscale-setup.json" "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/tailscale-setup.json"; do
         if [ -e "$state" ] || [ -L "$state" ]; then
             phase="$("$(relay_binary)" tailscale-state get "$state" phase)" || return 1
@@ -473,6 +498,10 @@ relay_connection_mode() {
 # requires its default mode-0700 directory. No permission repair is implicit.
 relay_acquire_setup_lock() {
     local directory="$1" lock fd identity inherited="${HERDR_RELAY_SETUP_LOCK_FD:-}" previous_umask mode
+    if [ "$(uname -s)" = Darwin ]; then
+        relay_acquire_darwin_lock "$directory"
+        return
+    fi
     [ "$(uname -s)" = Linux ] || return 0
     command -v flock >/dev/null || { echo 'flock is required for relay lifecycle changes.' >&2; return 1; }
     if [ ! -d "$directory" ]; then (umask 077; mkdir -p "$directory") || return 1; fi
@@ -507,6 +536,14 @@ relay_acquire_setup_lock() {
 # inherit a lifecycle lease or an unusable numeric descriptor in their env.
 relay_drop_setup_lock() {
     local fd="${HERDR_RELAY_SETUP_LOCK_FD:-}" identity
+    if [ "$(uname -s)" = Darwin ]; then
+        [ -n "$fd" ] || return 0
+        [ "$fd" = 8 ] || return 1
+        "$(relay_binary)" tailscale-platform check-fd "$fd" "$1/.setup.lock" || return 1
+        exec 8>&-
+        unset HERDR_RELAY_SETUP_LOCK_FD
+        return 0
+    fi
     [ "$(uname -s)" = Linux ] || { unset HERDR_RELAY_SETUP_LOCK_FD; return 0; }
     [ -n "$fd" ] || return 0
     [[ "$fd" =~ ^[0-9]+$ ]] || return 1
@@ -514,6 +551,26 @@ relay_drop_setup_lock() {
     [ "$(stat -Lc '%d:%i' "/proc/$BASHPID/fd/$fd" 2>/dev/null)" = "$identity" ] || return 1
     exec {fd}>&-
     unset HERDR_RELAY_SETUP_LOCK_FD
+}
+
+# Fixed descriptor 8 works with Apple's Bash 3.2 and is distinct from the
+# installer's publication descriptor 9. The helper locks the inherited open
+# file description; exiting the helper does not release its parent's lease.
+relay_acquire_darwin_lock() {
+    local directory="$1" lock inherited="${HERDR_RELAY_SETUP_LOCK_FD:-}"
+    if [ ! -d "$directory" ]; then (umask 077; mkdir -p "$directory") || return 1; fi
+    directory="$(cd "$directory" && pwd -P)" || return 1
+    lock="$directory/.setup.lock"
+    if [ ! -e "$lock" ] && [ ! -L "$lock" ]; then (umask 077; set -C; : > "$lock") || return 1; fi
+    private_owned_file "$lock" || return 1
+    if [ -n "$inherited" ]; then
+        [ "$inherited" = 8 ] || return 1
+        "$(relay_binary)" tailscale-platform lock-fd 8 "$lock"
+        return
+    fi
+    exec 8>>"$lock"
+    if ! "$(relay_binary)" tailscale-platform lock-fd 8 "$lock"; then exec 8>&-; return 1; fi
+    export HERDR_RELAY_SETUP_LOCK_FD=8
 }
 
 relay_require_legacy_transport() {
@@ -569,7 +626,13 @@ installed_service_env_file() {
             fi
             ;;
         Darwin)
-            service_file="$HOME/Library/LaunchAgents/com.herdr-mobile-relay.service.plist"
+            local label
+            label="$(darwin_relay_service_label)" || return 1
+            if [ "$label" = com.herdr-mobile-relay.tailscale ]; then
+                printf '%s\n' "$HOME/.config/herdr/plugins/config/herdr-mobile-relay.events/relay.env"
+                return 0
+            fi
+            service_file="$HOME/Library/LaunchAgents/$label.plist"
             if [ -r "$service_file" ]; then
                 awk '
                     /<key>HERDR_RELAY_ENV<\/key>/ { found = 1; next }
@@ -696,7 +759,9 @@ reload_launchd_service_definition() {
 installed_relay_service_active() {
     case "$(uname -s)" in
         Darwin)
-            launchd_service_loaded "gui/$(id -u)/com.herdr-mobile-relay.service"
+            local label
+            label="$(darwin_relay_service_label)" || return 1
+            launchd_service_loaded "gui/$(id -u)/$label"
             ;;
         Linux)
             local label
@@ -712,7 +777,15 @@ installed_relay_service_active() {
 restart_installed_relay_service() {
     case "$(uname -s)" in
         Darwin)
-            launchctl kickstart -k "gui/$(id -u)/com.herdr-mobile-relay.service"
+            local label common_dir
+            label="$(darwin_relay_service_label)" || return 1
+            common_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+            if [ "$label" = com.herdr-mobile-relay.tailscale ]; then
+                bash "$common_dir/tailscale-control.sh" restart
+            else
+                relay_require_legacy_transport "$(relay_env_path "$common_dir")" || return 1
+                launchctl kickstart -k "gui/$(id -u)/$label"
+            fi
             ;;
         Linux)
             local label common_dir

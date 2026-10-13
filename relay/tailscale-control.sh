@@ -39,18 +39,22 @@ tailscale_check_loaded_unit
 "$TAILSCALE_BINARY" tailscale-preflight managed-environment "$TAILSCALE_ENV" "$TAILSCALE_STATE" "$TAILSCALE_RELEASE_ROOT"
 case "$ACTION" in
     start|restart|stop)
-        systemctl --user "$ACTION" "$TAILSCALE_LABEL"
+        tailscale_service "$ACTION" "$TAILSCALE_LABEL"
         echo "Tailscale service $ACTION requested. Use Status for readiness; no network configuration or pairing data changed."
         ;;
     logs)
         # A log viewer is not a mutator and must not block subsequent setup.
         relay_drop_setup_lock "$TAILSCALE_CONFIG_DIR"
+        if [ "$TAILSCALE_MANAGER" = launchd ]; then
+            private_owned_file "$TAILSCALE_CONFIG_DIR/tailscale-relay.log" || { echo 'No private runtime log is available yet.'; exit 1; }
+            exec tail -n 100 -f "$TAILSCALE_CONFIG_DIR/tailscale-relay.log"
+        fi
         exec journalctl --user -u "$TAILSCALE_LABEL" -f
         ;;
     status)
         ready=false
         if TAILSCALE_HEALTH="$(wait_for_relay_health "$TAILSCALE_PORT" 1 0 "$TAILSCALE_INSTANCE")"; then
-            pid="$(systemctl --user show "$TAILSCALE_LABEL" --property MainPID --value)"
+            pid="$(tailscale_service_pid)"
             if "$TAILSCALE_BINARY" tailscale-preflight listener "$pid" "$TAILSCALE_PORT" "$TAILSCALE_BINARY"; then ready=true; fi
         fi
         echo "Local release/instance/listener verified: $ready"
